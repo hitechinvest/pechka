@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Гонки на печках в Дубае</title>
+<style>
+  :root {
+    --ink: #f3f6fb;
+    --panel: rgba(10, 16, 28, 0.72);
+    --panel-solid: #0d1420;
+    --gold: #ffd23f;
+    --sand: #e8cf9d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1420; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* ---------- меню ---------- */
+  #menu {
+    position: fixed; inset: 0; display: none; z-index: 30;
+    align-items: center; justify-content: center; padding: 16px;
+    background: radial-gradient(120% 100% at 50% 0%, rgba(12,22,40,0.55), rgba(6,10,18,0.9));
+    overflow: auto;
+  }
+  #menu.show { display: flex; }
+  .card {
+    width: min(720px, 100%); background: var(--panel); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.14); border-radius: 20px; padding: 22px 24px 26px;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.55);
+  }
+  h1 { margin: 0 0 4px; font-size: clamp(24px, 4.6vw, 40px); letter-spacing: -0.5px; }
+  h1 span { color: var(--gold); }
+  .sub { margin: 0 0 18px; color: #b9c6da; font-size: 14px; line-height: 1.5; }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1.4px; color: #8fa2bd; margin: 16px 0 8px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btns button {
+    min-width: 48px; padding: 11px 15px; font-size: 16px; font-weight: 700; cursor: pointer;
+    color: var(--ink); background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px; transition: transform .08s, background .15s, border-color .15s;
+  }
+  .btns button:hover { background: rgba(255,255,255,0.14); }
+  .btns button:active { transform: translateY(1px); }
+  .btns button.sel { background: var(--gold); color: #22160a; border-color: var(--gold); }
+  #ai-note { font-size: 13px; color: #9fb2cc; margin-top: 8px; }
+  #key-hints { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .kh {
+    font-size: 12px; padding: 5px 9px; border-radius: 9px;
+    border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.05);
+  }
+  .kh b { color: var(--gold); }
+  .rules { margin: 18px 0 0; padding: 14px 16px; border-radius: 14px;
+    background: rgba(255,210,63,0.08); border: 1px solid rgba(255,210,63,0.28); font-size: 13.5px; line-height: 1.6; }
+  .rules b { color: var(--gold); }
+  #start, #again, #to-menu {
+    margin-top: 20px; width: 100%; padding: 16px; font-size: 19px; font-weight: 800; cursor: pointer;
+    border: none; border-radius: 14px; color: #22160a;
+    background: linear-gradient(180deg, #ffe07a, #f5b31f);
+    box-shadow: 0 12px 30px rgba(245,179,31,0.35);
+  }
+  #to-menu { background: rgba(255,255,255,0.1); color: var(--ink); box-shadow: none; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 20; }
+  #hud.show { display: block; }
+
+  #board {
+    position: absolute; top: 12px; left: 12px; width: 236px; padding: 8px;
+    background: var(--panel); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px;
+    font-size: 13px; backdrop-filter: blur(6px);
+  }
+  #board .row { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
+  #board .row.me { background: rgba(255,210,63,0.16); }
+  #board .row.dq { opacity: 0.5; text-decoration: line-through; }
+  #board .pos { width: 16px; text-align: center; color: #93a5be; font-weight: 700; }
+  #board .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  #board .nm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #board .st { color: #9fb2cc; font-size: 11.5px; }
+
+  .light-box {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    background: var(--panel); border: 1px solid rgba(255,255,255,0.14); border-radius: 14px;
+    backdrop-filter: blur(6px); white-space: nowrap;
+  }
+  .light-box.danger { animation: alarm .45s infinite alternate; border-color: #ff4040; }
+  @keyframes alarm { from { background: rgba(120,10,10,0.75); } to { background: rgba(220,30,30,0.85); } }
+  #light-lamp { width: 20px; height: 20px; border-radius: 50%; background: #3ddc6b; flex: none; }
+  #light-text { font-weight: 800; font-size: 15px; }
+  #light-dist { color: #ffd23f; font-variant-numeric: tabular-nums; font-weight: 700; }
+
+  #topright {
+    position: absolute; top: 12px; right: 12px; text-align: right;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  }
+  #speedbox {
+    padding: 8px 14px; background: var(--panel); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 14px; backdrop-filter: blur(6px);
+  }
+  #speed { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  #speedbox small { color: #9fb2cc; font-size: 11px; }
+  #watching { font-size: 12px; color: #cfe0f5; margin-top: 2px; }
+  #ctrls { display: flex; gap: 6px; pointer-events: auto; }
+  #ctrls button {
+    padding: 8px 11px; font-size: 13px; cursor: pointer; color: var(--ink);
+    background: var(--panel); border: 1px solid rgba(255,255,255,0.16); border-radius: 11px;
+  }
+
+  #pedals {
+    position: absolute; bottom: 10px; left: 0; right: 0; padding: 0 8px;
+    display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; pointer-events: auto;
+  }
+  .pedal {
+    min-width: 74px; padding: 6px 9px; text-align: center; cursor: pointer;
+    background: var(--panel); border: 2px solid #fff; border-radius: 12px;
+    backdrop-filter: blur(6px); transition: background .1s, transform .08s;
+  }
+  .pedal b { display: block; font-size: 11px; opacity: 0.85; }
+  .pedal .pkey {
+    display: inline-block; margin: 1px 0; padding: 0 7px; font-size: 14px; font-weight: 800;
+    border-radius: 6px; background: rgba(255,255,255,0.16);
+  }
+  .pedal .pspeed { display: block; font-size: 10.5px; color: #a9bcd6; font-variant-numeric: tabular-nums; }
+  .pedal.on { background: rgba(255,210,63,0.35); transform: translateY(2px); }
+  .pedal.out { opacity: 0.45; }
+
+  #flash {
+    position: absolute; top: 96px; left: 0; right: 0; padding: 0 12px;
+    font-size: clamp(15px, 3vw, 22px); font-weight: 800; text-align: center; opacity: 0;
+    transition: opacity .3s; text-shadow: 0 3px 18px rgba(0,0,0,0.85);
+  }
+  /* пока экран не широкий, надпись уезжает под таблицу — иначе перекрывает её */
+  @media (max-width: 1024px) { #flash { top: 196px; } }
+  #countdown {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    font-size: clamp(70px, 16vw, 170px); font-weight: 900; color: var(--gold);
+    text-shadow: 0 8px 40px rgba(0,0,0,0.7); z-index: 25; pointer-events: none;
+  }
+  #countdown.show { display: flex; }
+
+  #results {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    z-index: 35; padding: 16px; background: rgba(6,10,18,0.82); overflow: auto;
+  }
+  #results.show { display: flex; }
+  h2 { margin: 0 0 12px; font-size: 26px; }
+  .results { margin: 0; padding-left: 22px; line-height: 1.9; }
+  .results li .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+  .results em { color: #9fb2cc; font-style: normal; font-size: 12.5px; }
+  .dqlist { color: #ff8a8a; font-size: 13px; }
+  .hint { margin-top: 12px; font-size: 12px; color: #8fa2bd; }
+  @media (max-width: 900px) {
+    .pedal { min-width: 58px; padding: 5px 6px; border-radius: 10px; }
+    .pedal b { font-size: 10px; }
+    .pedal .pspeed { font-size: 9.5px; }
+  }
+  @media (max-width: 560px) {
+    #board { width: 172px; font-size: 11px; padding: 6px; }
+    #board .st { font-size: 10px; }
+    #speed { font-size: 22px; }
+    #watching { font-size: 11px; }
+    /* на узком экране от светофора остаётся лампа и расстояние */
+    .light-box { gap: 6px; padding: 7px 9px; }
+    #light-text { display: none; }
+    #light-lamp { width: 16px; height: 16px; }
+    #light-dist { font-size: 13px; }
+    #watching { display: none; }
+    .lbl { display: none; }
+    #ctrls button { padding: 7px 9px; font-size: 14px; }
+  }
+  @media (max-width: 430px) {
+    #board { width: 132px; }
+    #board .st { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="hud">
+  <div id="board"></div>
+
+  <div id="light-box" class="light-box">
+    <div id="light-lamp"></div>
+    <div>
+      <div id="light-text">ЗЕЛЁНЫЙ</div>
+    </div>
+    <div id="light-dist">0 м</div>
+  </div>
+
+  <div id="topright">
+    <div id="speedbox">
+      <div><span id="speed">0</span> <small>км/ч</small></div>
+      <div id="watching">—</div>
+    </div>
+    <div id="ctrls">
+      <button id="switch" title="Сменить печку в камере (C)">⇄<span class="lbl"> печка</span></button>
+      <button id="cam" title="Вид (V)">◉<span class="lbl"> вид</span></button>
+      <button id="mute" title="Звук (M)">🔊</button>
+    </div>
+  </div>
+
+  <div id="flash"></div>
+  <div id="pedals"></div>
+</div>
+
+<div id="countdown"></div>
+
+<div id="menu" class="show">
+  <div class="card">
+    <h1>Гонки на <span>печках</span> в Дубае</h1>
+    <p class="sub">Русская печка на колёсах, песок, небоскрёбы и шесть перекрёстков со светофорами.
+      Держи свою клавишу — печка разгоняется, отпусти — тормозит.</p>
+
+    <div class="label">Сколько живых игроков</div>
+    <div class="btns" id="players">
+      <button data-n="1" class="sel">1</button><button data-n="2">2</button><button data-n="3">3</button>
+      <button data-n="4">4</button><button data-n="5">5</button><button data-n="6">6</button>
+      <button data-n="7">7</button>
+    </div>
+    <div id="ai-note">За остальных 7 печек играет компьютер</div>
+    <div id="key-hints"></div>
+
+    <div class="label">Кругов</div>
+    <div class="btns" id="laps">
+      <button data-n="1">1</button><button data-n="2" class="sel">2</button><button data-n="3">3</button>
+    </div>
+
+    <div class="rules">
+      <b>Правила.</b> На перекрёстках светофоры переключаются сами.
+      Проехал стоп-линию на <b>красный</b> — <b>дисквалификация</b>, печка глохнет.
+      Загорелся <b>зелёный</b> — слышен гудок паровоза, можно жать.
+      Жёлтый — предупреждение, ехать ещё можно.<br>
+      <b>Клавиши.</b> Газ у каждого игрока свой (1…7), у первого ещё <b>↑</b> и <b>Пробел</b>.
+      <b>C</b> — переключить камеру на другую печку, <b>V</b> — вид, <b>M</b> — звук.
+      На телефоне жми кнопки «Игрок N» внизу экрана.
+    </div>
+
+    <button id="start">Поехали!</button>
+  </div>
+</div>
+
+<div id="results">
+  <div class="card">
+    <div id="result-body"></div>
+    <button id="again">Ещё раз</button>
+    <button id="to-menu">В меню</button>
+    <div class="hint">Клавиша R — быстрый возврат в меню.</div>
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/world.js"></script>
+<script src="src/game.js"></script>
+<script>Game.boot();</script>
+</body>
+</html>
