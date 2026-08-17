@@ -6,6 +6,8 @@
 
   /* ---------- Текстуры (рисуем на canvas, чтобы не тянуть картинки) ---------- */
 
+  World.anisotropy = 1;      // выставляется рендерером при запуске
+
   function canvasTexture(w, h, draw, repeatX, repeatY) {
     var c = document.createElement('canvas');
     c.width = w; c.height = h;
@@ -13,6 +15,8 @@
     var t = new THREE.CanvasTexture(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(repeatX || 1, repeatY || 1);
+    t.encoding = THREE.sRGBEncoding;
+    t.anisotropy = World.anisotropy;
     return t;
   }
   World.canvasTexture = canvasTexture;
@@ -220,8 +224,62 @@
       var L = this.length;
       return ((dist % L) + L) % L;
     };
+
+    /* Горки: сумма гармоник по длине круга. Каждое слагаемое неотрицательно,
+       поэтому дорога никогда не уходит ниже песка, а профиль замкнут — на
+       стыке круга нет ступеньки. */
+    // Фазы нулевые: тогда на старте профиль ровный (все слагаемые в этой
+    // точке имеют нулевой наклон), а дальше горки расходятся по кругу.
+    var HILLS = [
+      { amp: 7.0, harm: 2, phase: 0 },      // длинные пологие подъёмы
+      { amp: 4.0, harm: 3, phase: 0 },
+      { amp: 2.0, harm: 7, phase: 0 },
+      { amp: 0.7, harm: 23, phase: 0 },     // мелкая волна под колёсами
+      { amp: 0.3, harm: 37, phase: 0 }
+    ];
+    /* Отдельные трамплины: короткие крутые бугры, на которых печку
+       по-настоящему подбрасывает даже без турбо. */
+    // Трамплин несимметричный: заезжаешь полого, не теряя скорости,
+    // а за гребнем дорога обрывается — там печку и подбрасывает.
+    var JUMPS = [
+      { at: 0.20, amp: 1.9, up: 24, down: 7 },
+      { at: 0.38, amp: 1.7, up: 22, down: 6.5 },
+      { at: 0.55, amp: 2.0, up: 26, down: 7.5 },
+      { at: 0.72, amp: 1.7, up: 22, down: 6.5 },
+      { at: 0.88, amp: 1.8, up: 24, down: 7 }
+    ];
+    track.jumps = JUMPS;
+
+    track.heightAt = function (dist) {
+      var L = this.length;
+      var u = this.norm(dist) / L * Math.PI * 2;
+      var h = 0;
+      for (var i = 0; i < HILLS.length; i++) {
+        h += HILLS[i].amp * (1 - Math.cos(u * HILLS[i].harm + HILLS[i].phase)) / 2;
+      }
+      for (var j = 0; j < JUMPS.length; j++) {
+        var diff = this.norm(dist - JUMPS[j].at * L);
+        if (diff > L / 2) diff -= L;                       // берём ближайшую сторону
+        var k = diff / (diff < 0 ? JUMPS[j].up : JUMPS[j].down);
+        if (k > -4 && k < 4) h += JUMPS[j].amp * Math.exp(-k * k);
+      }
+      return h;
+    };
+    /* Уклон в метрах подъёма на метр пути: + в горку, − под горку. */
+    track.slopeAt = function (dist) {
+      var d = 2;
+      return (this.heightAt(dist + d) - this.heightAt(dist - d)) / (2 * d);
+    };
+    /* Кривизна профиля: на гребне отрицательная — по ней считаем отрыв. */
+    track.curvatureAt = function (dist) {
+      var d = 4;
+      return (this.heightAt(dist + d) - 2 * this.heightAt(dist) + this.heightAt(dist - d)) / (d * d);
+    };
+
     track.pointAt = function (dist) {
-      return this.curve.getPointAt(this.norm(dist) / this.length);
+      var p = this.curve.getPointAt(this.norm(dist) / this.length);
+      p.y = this.heightAt(dist);
+      return p;
     };
     track.tangentAt = function (dist) {
       return this.curve.getTangentAt(this.norm(dist) / this.length).normalize();
@@ -244,7 +302,7 @@
       var n = track.sideAt(d);
       var l = p.clone().addScaledVector(n, halfWidth);
       var r = p.clone().addScaledVector(n, -halfWidth);
-      pos.push(l.x, y, l.z, r.x, y, r.z);
+      pos.push(l.x, p.y + y, l.z, r.x, p.y + y, r.z);
       var v = vRepeatDivisor ? d / vRepeatDivisor : i / N;
       uv.push(0, v, 1, v);
       if (i < N) {
@@ -270,6 +328,41 @@
     return ribbon(track, track.width / 2 + 5, 0.008, mat, 500);
   };
 
+  /* Насыпь: скаты от края обочины вниз к песку, чтобы дорога на горках
+     не висела в воздухе. Ширина ската зависит от высоты в этом месте. */
+  World.embankmentMesh = function (track) {
+    var N = 500;
+    var edge = track.width / 2 + 5;
+    var pos = [], idx = [];
+    for (var i = 0; i <= N; i++) {
+      var d = track.length * i / N;
+      var p = track.pointAt(d);
+      var n = track.sideAt(d);
+      var run = 6 + p.y * 1.5;
+      var lTop = p.clone().addScaledVector(n, edge);
+      var lBot = p.clone().addScaledVector(n, edge + run);
+      var rTop = p.clone().addScaledVector(n, -edge);
+      var rBot = p.clone().addScaledVector(n, -(edge + run));
+      pos.push(lTop.x, p.y, lTop.z, lBot.x, 0.01, lBot.z,
+               rTop.x, p.y, rTop.z, rBot.x, 0.01, rBot.z);
+      if (i < N) {
+        var a = i * 4;
+        idx.push(a, a + 1, a + 4, a + 1, a + 5, a + 4);          // левый скат
+        idx.push(a + 2, a + 6, a + 3, a + 3, a + 6, a + 7);      // правый скат
+      }
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0xd6bb89 }));
+  };
+
+  /* Насколько далеко от осевой начинается ровный песок в этом месте. */
+  World.roadFootprint = function (track, dist) {
+    return track.width / 2 + 11 + track.heightAt(dist) * 1.5;
+  };
+
   /* ---------- Перекрёстки со светофорами ---------- */
 
   World.buildIntersections = function (track, scene) {
@@ -286,7 +379,9 @@
 
       var group = new THREE.Group();
       group.position.copy(p);
+      group.rotation.order = 'YXZ';
       group.rotation.y = angle;
+      group.rotation.x = -Math.atan(track.slopeAt(d));   // ложится по уклону горки
       scene.add(group);
 
       // поперечная улица
@@ -469,7 +564,10 @@
       var x = center.x + Math.cos(ang) * rad;
       var z = center.z + Math.sin(ang) * rad;
       var near = distanceToRoad(x, z);
-      if (near < track.width / 2 + 16) continue;
+      if (near < track.width / 2 + 34) continue;    // за насыпью, иначе дом окажется в склоне
+      var fin0 = track.pointAt(0), fs0 = track.sideAt(0);
+      var bjx = fin0.x + fs0.x * -82, bjz = fin0.z + fs0.z * -82;
+      if ((x - bjx) * (x - bjx) + (z - bjz) * (z - bjz) < 105 * 105) continue;   // площадь башни
 
       var h = 26 + Math.random() * Math.random() * 190 + (near < 90 ? 0 : 30);
       var bw = 12 + Math.random() * 24;
@@ -500,37 +598,22 @@
         new THREE.MeshLambertMaterial({ color: 0x8d9aa6 })));
     }
 
-    // Бурдж-Халифа: сужающиеся секции + шпиль
-    var burjGeos = [], spireGeos = [];
-    var bx = center.x + 20, bz = center.z + 40;
-    var y = 0, secW = 46;
-    for (var s = 0; s < 14; s++) {
-      var sh = 34 - s * 0.9;
-      var sec = new THREE.CylinderGeometry(secW * 0.5, secW * 0.46, sh, 6);
-      World.scaleUV(sec, Math.max(1, Math.round(secW / 7)), Math.max(1, Math.round(sh / 8)));
-      var ms = new THREE.Matrix4().makeRotationY(s * 0.12);
-      ms.setPosition(bx, y + sh / 2, bz);
-      sec.applyMatrix4(ms);
-      burjGeos.push(sec);
-      y += sh;
-      secW *= 0.87;
-    }
-    group.add(new THREE.Mesh(World.mergeGeometries(burjGeos),
-      new THREE.MeshLambertMaterial({ map: World.windowsTexture() })));
-    var spire = new THREE.CylinderGeometry(0.4, 2.2, 120, 8);
-    spire.translate(bx, y + 60, bz);
-    spireGeos.push(spire);
-    group.add(new THREE.Mesh(World.mergeGeometries(spireGeos),
-      new THREE.MeshLambertMaterial({ color: 0xcfd8de })));
+    // Бурдж-Халифа стоит у самой финишной прямой
+    var fin = track.pointAt(0);
+    var fside = track.sideAt(0);
+    var burj = new THREE.Vector3(fin.x, 0, fin.z).addScaledVector(fside, -82);
+    World.burjPosition = burj.clone();
+    World.buildBurj(group, burj.x, burj.z);
 
-    // Пальмы вдоль трассы: стволы и листья — по одной склеенной сетке
+    // Пальмы вдоль трассы: стоят на песке за насыпью, поэтому отступ зависит
+    // от высоты дороги в этом месте
     var trunkGeos = [], leafGeos = [];
     for (var i = 0; i < 120; i++) {
       var d = track.length * i / 120 + 4;
       var p = track.pointAt(d);
       var n = track.sideAt(d);
       var sideSign = (i % 2 === 0) ? 1 : -1;
-      var off = track.width / 2 + 8 + Math.random() * 5;
+      var off = World.roadFootprint(track, d) + 3 + Math.random() * 6;
       var pp = p.clone().addScaledVector(n, sideSign * off);
       World.palmGeometry(pp.x, pp.z, trunkGeos, leafGeos);
     }
@@ -554,6 +637,98 @@
       new THREE.MeshLambertMaterial({ color: 0xdfc48c })));
 
     return group;
+  };
+
+  /* Полосатые столбики перед трамплинами — чтобы прыжок не был сюрпризом. */
+  World.jumpSigns = function (track, scene) {
+    var stripe = canvasTexture(32, 64, function (g, w, h) {
+      for (var i = 0; i < 8; i++) {
+        g.fillStyle = i % 2 ? '#1e1e22' : '#ffd23f';
+        g.fillRect(0, i * h / 8, w, h / 8);
+      }
+    }, 1, 3);
+    var geos = [];
+    for (var j = 0; j < track.jumps.length; j++) {
+      var d = track.jumps[j].at * track.length - track.jumps[j].up * 1.2;
+      for (var s = -1; s <= 1; s += 2) {
+        var p = track.pointAt(d);
+        var n = track.sideAt(d);
+        var post = new THREE.CylinderGeometry(0.3, 0.3, 3, 6);
+        post.translate(p.x + n.x * s * (track.width / 2 + 2),
+                       p.y + 1.5,
+                       p.z + n.z * s * (track.width / 2 + 2));
+        geos.push(post);
+      }
+    }
+    var mesh = new THREE.Mesh(World.mergeGeometries(geos),
+      new THREE.MeshLambertMaterial({ map: stripe }));
+    scene.add(mesh);
+    return mesh;
+  };
+
+  /* Бурдж-Халифа: три крыла со ступенчатыми отступами, шпиль и площадь. */
+  World.buildBurj = function (group, x, z) {
+    var winTex = World.windowsTexture();
+    var glassMat = new THREE.MeshLambertMaterial({ map: winTex });
+    var trimMat = new THREE.MeshLambertMaterial({ color: 0xcfd8de });
+
+    var glass = [], trim = [];
+    var y = 0;
+    var w = 30;                 // полуширина крыла у земли
+    var sections = 26;
+    for (var i = 0; i < sections; i++) {
+      var h = 30 - i * 0.55;
+      var wing = new THREE.CylinderGeometry(w, w * 0.97, h, 6);
+      World.scaleUV(wing, Math.max(1, Math.round(w / 3)), Math.max(1, Math.round(h / 7)));
+      var m = new THREE.Matrix4().makeRotationY(i * 0.085);
+      m.setPosition(x, y + h / 2, z);
+      wing.applyMatrix4(m);
+      glass.push(wing);
+
+      // тонкий карниз на каждом отступе
+      var ledge = new THREE.CylinderGeometry(w * 1.04, w * 1.04, 1.1, 6);
+      var ml = new THREE.Matrix4().makeRotationY(i * 0.085);
+      ml.setPosition(x, y + h, z);
+      ledge.applyMatrix4(ml);
+      trim.push(ledge);
+
+      y += h;
+      w *= 0.915;
+    }
+
+    // шпиль
+    var spire = new THREE.CylinderGeometry(0.6, 3.4, 150, 8);
+    spire.translate(x, y + 75, z);
+    trim.push(spire);
+    var tip = new THREE.CylinderGeometry(0.05, 0.6, 26, 6);
+    tip.translate(x, y + 150 + 13, z);
+    trim.push(tip);
+
+    group.add(new THREE.Mesh(World.mergeGeometries(glass), glassMat));
+    group.add(new THREE.Mesh(World.mergeGeometries(trim), trimMat));
+
+    // площадь и бассейн у подножия
+    var plaza = new THREE.Mesh(new THREE.CylinderGeometry(78, 78, 0.6, 24),
+      new THREE.MeshLambertMaterial({ color: 0xd8d2c4 }));
+    plaza.position.set(x, 0.3, z);
+    group.add(plaza);
+    var pool = new THREE.Mesh(new THREE.CylinderGeometry(46, 46, 0.4, 24),
+      new THREE.MeshLambertMaterial({ color: 0x2f7fa8 }));
+    pool.position.set(x, 0.65, z);
+    group.add(pool);
+
+    // пальмы по кругу площади
+    var trunks = [], leaves = [];
+    for (var k = 0; k < 14; k++) {
+      var a = k / 14 * Math.PI * 2;
+      World.palmGeometry(x + Math.cos(a) * 70, z + Math.sin(a) * 70, trunks, leaves);
+    }
+    group.add(new THREE.Mesh(World.mergeGeometries(trunks),
+      new THREE.MeshLambertMaterial({ color: 0x8a6a44 })));
+    group.add(new THREE.Mesh(World.mergeGeometries(leaves),
+      new THREE.MeshLambertMaterial({ color: 0x3f7d34, side: THREE.DoubleSide })));
+
+    return { x: x, z: z, height: y + 176 };
   };
 
   /* Геометрия одной пальмы, разложенная по спискам «ствол» и «листья». */
@@ -1121,7 +1296,8 @@
 
     g.userData = {
       wheels: wheels, fire: fire, fireGlow: fireGlow, label: lbl,
-      body: body, stripe: perina, quilt: odeyalo, vent: vent, rider: riderGroup
+      body: body, stripe: perina, quilt: odeyalo, vent: vent, rider: riderGroup,
+      blob: shadow
     };
     return g;
   };
@@ -1205,7 +1381,7 @@
     g.add(shadow);
 
     g.visible = false;
-    g.userData = { armL: armL, armR: armR, bag: bag, cane: cane };
+    g.userData = { armL: armL, armR: armR, bag: bag, cane: cane, blob: shadow };
     return g;
   };
 

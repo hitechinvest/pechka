@@ -16,6 +16,9 @@
   var STEAM_DRAIN = 32;        // расход пара, % в секунду
   var STEAM_REFILL = 11;       // восстановление пара, % в секунду
   var STEAM_MIN = 18;          // ниже этого турбо не включить
+  var HILL_PULL = 24;          // как сильно горка тянет назад (м/с^2 на единицу уклона)
+  var DOWNHILL_CAP = 1.22;     // под горку можно перебрать сверх обычного максимума
+  var GRAVITY = 12.5;          // сила тяжести: чуть меньше настоящей, чтобы прыжок читался
 
   var COLORS = [0xff4d4d, 0x4da3ff, 0x53d769, 0xffd23f, 0xb46cff, 0xff8a3d, 0x38e0d0, 0xff6fb5];
   /* Газ, руль и турбо для каждого игрока. Клавиши читаются по физическому
@@ -64,6 +67,8 @@
     noGrannies: false,
     lights: 'auto'
   };
+  var sunLight = null;
+  var shadowsOn = false;
   var camPos = new THREE.Vector3();
   var camLook = new THREE.Vector3();
   var ui = {};
@@ -76,19 +81,55 @@
     renderer.setSize(global.innerWidth, global.innerHeight);
     renderer.setClearColor(0xbcd3e6);
 
+    // цвет и свет: линейное освещение с плёночной компрессией даёт куда более
+    // живую картинку, чем сырой вывод
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.98;
+    renderer.physicallyCorrectLights = false;
+    World.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+
+    // тени: на телефоне по умолчанию выключены, на десктопе включены
+    shadowsOn = !('ontouchstart' in global) && global.innerWidth > 700;
+    renderer.shadowMap.enabled = shadowsOn;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
     scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xd8c49b, 0.0013);
+    scene.fog = new THREE.FogExp2(0xcbb489, 0.0013);
 
     camera = new THREE.PerspectiveCamera(62, global.innerWidth / global.innerHeight, 0.5, 3000);
     camera.position.set(0, 20, 40);
 
-    scene.add(new THREE.HemisphereLight(0xdfefff, 0xd8bd8a, 0.95));
-    var sun = new THREE.DirectionalLight(0xfff2d0, 0.85);
-    sun.position.set(-320, 420, -260);
-    scene.add(sun);
+    scene.add(new THREE.HemisphereLight(0xbcd8ff, 0xa98d5f, 0.62));
+    sunLight = new THREE.DirectionalLight(0xfff0c8, 1.3);
+    sunLight.position.set(-90, 130, -70);
+    sunLight.castShadow = shadowsOn;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    var cam = sunLight.shadow.camera;
+    cam.left = -70; cam.right = 70; cam.top = 70; cam.bottom = -70;
+    cam.near = 10; cam.far = 380;
+    sunLight.shadow.bias = -0.0012;
+    sunLight.shadow.normalBias = 0.6;
+    scene.add(sunLight);
+    scene.add(sunLight.target);
 
     clock = new THREE.Clock();
     global.addEventListener('resize', onResize);
+  }
+
+  /* Солнце светит вокруг печки в фокусе — так теневая карта тратится на то,
+     что реально видно. */
+  function updateSun(r) {
+    if (!sunLight || !r) return;
+    sunLight.target.position.copy(r.mesh.position);
+    sunLight.position.copy(r.mesh.position).add(new THREE.Vector3(-90, 130, -70));
+  }
+
+  function setShadows(on) {
+    shadowsOn = on;
+    renderer.shadowMap.enabled = on;
+    sunLight.castShadow = on;
+    scene.traverse(function (o) { if (o.isMesh && o.userData.shadowCaster) o.castShadow = on; });
   }
 
   function onResize() {
@@ -101,8 +142,12 @@
   function buildWorld() {
     track = World.buildTrack();
     World.buildCity(track, scene);
-    scene.add(World.shoulderMesh(track));
-    scene.add(World.roadMesh(track));
+    var ground = [World.embankmentMesh(track), World.shoulderMesh(track), World.roadMesh(track)];
+    for (var i = 0; i < ground.length; i++) {
+      ground[i].receiveShadow = true;
+      scene.add(ground[i]);
+    }
+    World.jumpSigns(track, scene);
     intersections = World.buildIntersections(track, scene);
     intersections.forEach(function (i) { World.applyLightState(i); });
     addStartLine();
@@ -115,6 +160,11 @@
   function createGrannies() {
     for (var i = 0; i < 7; i++) {
       var mesh = World.buildGranny();
+      mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      if (mesh.userData.blob) mesh.userData.blob.visible = !shadowsOn;
+      if (mesh.userData.blob) mesh.userData.blob.visible = !shadowsOn;
       scene.add(mesh);
       grannies.push({
         isGranny: true,
@@ -243,7 +293,7 @@
       var n = track.sideAt(g.dist);
       var t = track.tangentAt(g.dist);
       g.mesh.position.copy(p).addScaledVector(n, g.lane);
-      g.mesh.position.y = Math.abs(Math.sin(g.walk)) * 0.045;
+      g.mesh.position.y = p.y + Math.abs(Math.sin(g.walk)) * 0.045;
       var faceDir = g.dir;
       if (target) faceDir = (target.lane > g.lane) ? 1 : -1;   // разворачивается к нарушителю
       g.mesh.rotation.y = Math.atan2(t.x, t.z) + faceDir * Math.PI / 2;
@@ -293,7 +343,9 @@
     var t = track.tangentAt(0);
     var g = new THREE.Group();
     g.position.copy(p);
+    g.rotation.order = 'YXZ';
     g.rotation.y = Math.atan2(t.x, t.z);
+    g.rotation.x = -Math.atan(track.slopeAt(0));
 
     var tex = World.canvasTexture(64, 64, function (ctx, w, h) {
       for (var y = 0; y < 8; y++) {
@@ -354,6 +406,11 @@
       var color = COLORS[i % COLORS.length];
       var labelText = isHuman ? (name + ' [' + HUMAN_KEYS[i].short + ']') : null;
       var mesh = World.buildStove(color, labelText, riders[i]);
+      mesh.rotation.order = 'YXZ';
+      mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      if (mesh.userData.blob) mesh.userData.blob.visible = !shadowsOn;
       scene.add(mesh);
 
       var row = Math.floor(i / 2);
@@ -370,6 +427,11 @@
         mesh: mesh,
         lane: (col === 0 ? -1 : 1) * (2.6 + row * 1.75),
         steer: 0,
+        air: 0,            // насколько печка сейчас оторвалась от дороги
+        flying: false,
+        flyY: 0,
+        flyVel: 0,
+        slope: 0,
         boosting: false,
         steam: 100,
         bumpCooldown: 0,
@@ -404,10 +466,11 @@
     var t = track.tangentAt(r.dist);
     var n = track.sideAt(r.dist);
     r.mesh.position.copy(p).addScaledVector(n, r.lane);
-    r.mesh.position.y = 0;
-    // печка смотрит туда, куда едет: доворот от руля плюс крен корпуса
+    r.mesh.position.y = p.y + (r.air || 0);
+    // печка смотрит туда, куда едет: доворот от руля, наклон по горке и крен
     var drift = Math.atan2(r.steer * STEER_RATE * 0.6, Math.max(r.speed, 6));
     r.mesh.rotation.y = Math.atan2(t.x, t.z) - drift;
+    r.mesh.rotation.x = -Math.atan(track.slopeAt(r.dist)) * (r.air > 0.1 ? 0.4 : 1);
     r.mesh.rotation.z = -r.steer * 0.045 * Math.min(1, r.speed / 12);
   }
 
@@ -505,38 +568,89 @@
     flash('ДИСКВАЛИФИКАЦИЯ: ' + r.name + ' ' + r.dqReason + '!', '#ff4d4d');
   }
 
-  /* Печки задевают друг друга бортами: расталкиваем и немного гасим скорость. */
+  /* Столкновения печек. Печь — прямоугольник в координатах «вдоль трассы ×
+     поперёк», поэтому расходимся по той оси, где перекрытие меньше:
+     бортом — расталкиваем вбок, сзади — обмениваемся скоростью, как при
+     ударе двух одинаковых масс. */
   function resolveContacts() {
-    var minGap = BODY_HALF * 2;
+    var LONG_HALF = 2.05;                 // полудлина печи
+    var LAT_HALF = BODY_HALF;             // полуширина
+    var RESTITUTION = 0.18;               // удар почти неупругий: печь тяжёлая
+
     for (var i = 0; i < racers.length; i++) {
       for (var j = i + 1; j < racers.length; j++) {
         var a = racers[i], b = racers[j];
         if (a.dq && b.dq) continue;
-        if (Math.abs(a.dist - b.dist) > 4.3) continue;
-        var dl = a.lane - b.lane;
-        var over = minGap - Math.abs(dl);
-        if (over <= 0) continue;
 
-        var sign = dl >= 0 ? 1 : -1;
+        var dd = a.dist - b.dist;
+        var dl = a.lane - b.lane;
+        var overLong = LONG_HALF * 2 - Math.abs(dd);
+        var overLat = LAT_HALF * 2 - Math.abs(dl);
+        if (overLong <= 0 || overLat <= 0) continue;
+
         var aFixed = a.dq || a.finished, bFixed = b.dq || b.finished;
-        if (!aFixed && !bFixed) {
-          a.lane += sign * over / 2;
-          b.lane -= sign * over / 2;
-        } else if (!aFixed) {
-          a.lane += sign * over;
-        } else if (!bFixed) {
-          b.lane -= sign * over;
+        var impact;
+
+        if (overLat <= overLong * 0.65) {
+          // ---- контакт бортами ----
+          var sign = dl >= 0 ? 1 : -1;
+          if (!aFixed && !bFixed) {
+            a.lane += sign * overLat / 2;
+            b.lane -= sign * overLat / 2;
+          } else if (!aFixed) {
+            a.lane += sign * overLat;
+          } else if (!bFixed) {
+            b.lane -= sign * overLat;
+          }
+          // скребём боками: обе теряют немного хода и получают толчок наружу
+          impact = Math.abs(a.speed - b.speed) * 0.5 + 2;
+          if (!aFixed) { a.speed *= 0.975; a.steer *= 0.5; }
+          if (!bFixed) { b.speed *= 0.975; b.steer *= 0.5; }
+        } else {
+          // ---- удар в корму ----
+          var front = dd >= 0 ? a : b;      // кто впереди
+          var rear = dd >= 0 ? b : a;
+          var frontFixed = dd >= 0 ? aFixed : bFixed;
+          var rearFixed = dd >= 0 ? bFixed : aFixed;
+
+          if (!frontFixed && !rearFixed) {
+            front.dist += overLong / 2;
+            rear.dist -= overLong / 2;
+          } else if (!frontFixed) {
+            front.dist += overLong;
+          } else if (!rearFixed) {
+            rear.dist -= overLong;
+          }
+
+          var rel = rear.speed - front.speed;
+          impact = Math.abs(rel);
+          if (rel > 0) {
+            // одинаковые массы: скорости почти меняются местами
+            var vf = ((1 + RESTITUTION) * rear.speed + (1 - RESTITUTION) * front.speed) / 2;
+            var vr = ((1 - RESTITUTION) * rear.speed + (1 + RESTITUTION) * front.speed) / 2;
+            if (!frontFixed) front.speed = Math.min(vf, BOOST_SPEED * 1.3);
+            if (!rearFixed) rear.speed = Math.max(0, vr);
+            // от удара обе печки чуть уводит вбок — толкаться в лоб невыгодно
+            var nudge = Math.min(1.2, impact * 0.06);
+            if (!frontFixed) front.lane += (front.lane >= rear.lane ? 1 : -1) * nudge;
+            if (!rearFixed) rear.lane += (rear.lane >= front.lane ? 1 : -1) * nudge;
+          }
         }
+
         a.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, a.lane));
         b.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, b.lane));
 
-        if (!aFixed) a.speed *= 0.985;
-        if (!bFixed) b.speed *= 0.985;
-        var loud = Math.max(a.speed, b.speed);
-        if (a.bumpCooldown <= 0 && b.bumpCooldown <= 0 && loud > 6) {
-          a.bumpCooldown = b.bumpCooldown = 0.45;
+        if (a.bumpCooldown <= 0 && b.bumpCooldown <= 0 && impact > 1.5) {
+          a.bumpCooldown = b.bumpCooldown = 0.3;
           var d = camera.position.distanceTo(a.mesh.position);
-          sfx.bump(Math.max(0, 1 - d / 120) * Math.min(1, loud / 20));
+          sfx.bump(Math.max(0, 1 - d / 130) * Math.min(1, impact / 12));
+          // пыль и искры в точке контакта
+          var mid = a.mesh.position.clone().lerp(b.mesh.position, 0.5);
+          mid.y += 1.2;
+          for (var k = 0; k < 3; k++) {
+            smoke.emit(mid, new THREE.Vector3((Math.random() - 0.5) * 4,
+              1 + Math.random() * 2, (Math.random() - 0.5) * 4), 1.1, 0xd8c9a8);
+          }
         }
       }
     }
@@ -594,10 +708,19 @@
       else r.speed = Math.max(0, r.speed - BRAKE * dt);
       if (r.speed > maxV) r.speed = Math.max(maxV, r.speed - BRAKE * 0.8 * dt);
 
+      // горки: в подъём тянет назад и режет потолок скорости,
+      // под уклон печка разгоняется сверх обычного предела
+      var slope = track.slopeAt(r.dist);
+      if (slope > 0) maxV *= Math.max(0.5, 1 - slope * 2.2);
+      r.speed = Math.max(0, r.speed - HILL_PULL * slope * dt);
+      r.speed = Math.min(r.speed, maxV * DOWNHILL_CAP);
+
+      r.slope = slope;
+
       // Руль: на малой скорости печка почти не слушается.
       // Внимание: track.sideAt() смотрит ВЛЕВО от движения, поэтому
       // «вправо» (steer = +1) — это уменьшение полосы.
-      r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9);
+      r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * (r.air > 0.15 ? 0.3 : 1);
       r.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, r.lane));
 
       if (onEdge && r.speed > 3) {
@@ -616,6 +739,10 @@
 
     r.prevDist = r.dist;
     r.dist += r.speed * dt;
+
+    // Полёт считаем уже по новому положению: пока печка в воздухе, дорога
+    // из-под неё уходит вниз, и сравнивать надо с высотой там, куда она попала.
+    if (!r.dq && !r.finished) updateJump(r, dt, r.slope);
 
     // проверка перекрёстков
     for (var i = 0; i < intersections.length; i++) {
@@ -666,6 +793,39 @@
       if (gg < bestGap && Math.abs(g.lane - r.lane) < 3.2) { bestGap = gg; best = g; }
     }
     return best ? { obj: best, gap: bestGap } : null;
+  }
+
+  /* Отрыв на гребне. Печку держит дорога, пока ей хватает силы тяжести:
+     если дорога уходит вниз быстрее, чем печка падает, — она взлетает.
+     Считаем в абсолютной высоте, так честнее на длинных спусках. */
+  function updateJump(r, dt, slope) {
+    var roadY = track.heightAt(r.dist);
+
+    if (!r.flying) {
+      var down = r.speed * r.speed * track.curvatureAt(r.dist);
+      r.air = 0;
+      if (down < -GRAVITY && r.speed > 14) {
+        // отрываемся: дорога уходит вниз быстрее, чем печка успевает падать
+        r.flying = true;
+        r.flyY = roadY;
+        r.flyVel = Math.max(0, r.speed * slope) + 2.2;   // толчок на срыве с гребня
+      }
+      return;                       // в кадре отрыва ещё не падаем
+    }
+
+    r.flyVel -= GRAVITY * dt;
+    r.flyY += r.flyVel * dt;
+    if (r.flyY <= roadY) {
+      if (r.flyVel < -4) {                     // приземление слышно
+        var dl = camera.position.distanceTo(r.mesh.position);
+        sfx.bump(Math.max(0, 1 - dl / 110) * Math.min(1, -r.flyVel / 10));
+      }
+      r.flying = false;
+      r.flyVel = 0;
+      r.air = 0;
+    } else {
+      r.air = Math.min(3.2, r.flyY - roadY);
+    }
   }
 
   function aiSteer(r) {
@@ -988,7 +1148,7 @@
       if (lbl) lbl.visible = !f || racers[n] !== f;
     }
     if (state === 'menu') updateMenuCamera(dt);
-    else updateCamera(dt, f);
+    else { updateCamera(dt, f); updateSun(f); }
 
     if (state === 'race' && f) {
       music.setIntensity(f.lap >= totalLaps ? 3 : 2);
@@ -1005,9 +1165,9 @@
     menuT += dt;
     var d = 120 + menuT * 22;
     var p = track.pointAt(d);
-    camera.position.set(p.x, 26, p.z);
+    camera.position.set(p.x, p.y + 26, p.z);
     var look = track.pointAt(d + 90);
-    camera.lookAt(look.x, 6, look.z);
+    camera.lookAt(look.x, look.y + 6, look.z);
   }
 
   /* ---------------- Ввод ---------------- */
@@ -1359,6 +1519,9 @@
           steam: Math.round(r.steam), boosting: r.boosting,
           reason: r.dqReason || null, rider: r.rider,
           throttle: r.throttle,
+          height: +track.heightAt(r.dist).toFixed(1),
+          slope: +(track.slopeAt(r.dist) * 100).toFixed(1),
+          air: +r.air.toFixed(2),
           blocker: (function () {
             if (r.isHuman) return null;
             var ob = obstacleAhead(r, 30);
