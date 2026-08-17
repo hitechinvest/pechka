@@ -807,9 +807,152 @@
     return TEX;
   }
 
+  /* ---------- Пассажиры на лежанке ---------- */
+
+  /* Емеля: рубаха, порты, лапти, лежит подперев голову рукой. */
+  function buildEmelya() {
+    var g = new THREE.Group();
+    var skinMat = new THREE.MeshLambertMaterial({ color: 0xf0c9a0 });
+
+    // рубаха с рукавами
+    var shirt = [];
+    var torso = new THREE.BoxGeometry(0.64, 0.4, 1.2);
+    torso.translate(0, 0.2, 0.05);
+    shirt.push(torso);
+    for (var sx = -1; sx <= 1; sx += 2) {
+      var sleeve = new THREE.CylinderGeometry(0.11, 0.11, 0.5, 6);
+      var m = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      m.setPosition(sx * 0.34, 0.2, -0.1);
+      sleeve.applyMatrix4(m);
+      shirt.push(sleeve);
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(shirt),
+      new THREE.MeshLambertMaterial({ color: 0xc0392b })));
+
+    // порты
+    var pants = [];
+    for (var px = -1; px <= 1; px += 2) {
+      var leg = new THREE.CylinderGeometry(0.13, 0.12, 0.8, 6);
+      var ml = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      ml.setPosition(px * 0.17, 0.16, 1.02);
+      leg.applyMatrix4(ml);
+      pants.push(leg);
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(pants),
+      new THREE.MeshLambertMaterial({ color: 0x44546e })));
+
+    // лапти
+    var bast = [];
+    for (var bx = -1; bx <= 1; bx += 2) {
+      var shoe = new THREE.BoxGeometry(0.22, 0.16, 0.26);
+      shoe.translate(bx * 0.17, 0.14, 1.5);
+      bast.push(shoe);
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(bast),
+      new THREE.MeshLambertMaterial({ color: 0xc8a05a })));
+
+    // голова и рука, которой подпирает щёку
+    var skin = [];
+    var head = new THREE.SphereGeometry(0.21, 12, 10);
+    head.translate(0, 0.5, -0.75);
+    skin.push(head);
+    var arm = new THREE.CylinderGeometry(0.09, 0.09, 0.55, 6);
+    var ma = new THREE.Matrix4().makeRotationZ(0.5);
+    ma.setPosition(0.3, 0.35, -0.62);
+    arm.applyMatrix4(ma);
+    skin.push(arm);
+    g.add(new THREE.Mesh(World.mergeGeometries(skin), skinMat));
+
+    // волосы и борода
+    var hair = [];
+    var cap = new THREE.SphereGeometry(0.23, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.58);
+    cap.translate(0, 0.52, -0.76);
+    hair.push(cap);
+    var beard = new THREE.SphereGeometry(0.15, 10, 8);
+    var mb = new THREE.Matrix4().makeScale(1, 0.85, 0.7);
+    mb.setPosition(0, 0.38, -0.58);
+    beard.applyMatrix4(mb);
+    hair.push(beard);
+    g.add(new THREE.Mesh(World.mergeGeometries(hair),
+      new THREE.MeshLambertMaterial({ color: 0x9a6b3f })));
+
+    return g;
+  }
+
+  /* Блондинка загорает на лежанке: купальник, очки, соломенная шляпа рядом. */
+  function buildSunbather() {
+    var g = new THREE.Group();
+    var skinMat = new THREE.MeshLambertMaterial({ color: 0xe8b184 });
+
+    var skin = [];
+    var torso = new THREE.BoxGeometry(0.5, 0.32, 1.1);
+    torso.translate(0, 0.17, 0.0);
+    skin.push(torso);
+    for (var lx = -1; lx <= 1; lx += 2) {
+      var leg = new THREE.CylinderGeometry(0.11, 0.09, 0.95, 6);
+      var ml = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      ml.setPosition(lx * 0.13, 0.14, 1.02);
+      leg.applyMatrix4(ml);
+      skin.push(leg);
+
+      var arm = new THREE.CylinderGeometry(0.075, 0.075, 0.62, 6);
+      var ma = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      ma.setPosition(lx * 0.3, 0.16, -0.05);
+      arm.applyMatrix4(ma);
+      skin.push(arm);
+    }
+    var head = new THREE.SphereGeometry(0.19, 12, 10);
+    head.translate(0, 0.28, -0.68);
+    skin.push(head);
+    g.add(new THREE.Mesh(World.mergeGeometries(skin), skinMat));
+
+    // купальник
+    var swim = [];
+    var top = new THREE.BoxGeometry(0.52, 0.14, 0.24);
+    top.translate(0, 0.26, -0.28);
+    swim.push(top);
+    var bottom = new THREE.BoxGeometry(0.5, 0.14, 0.28);
+    bottom.translate(0, 0.25, 0.36);
+    swim.push(bottom);
+    g.add(new THREE.Mesh(World.mergeGeometries(swim),
+      new THREE.MeshLambertMaterial({ color: 0xff4f8b })));
+
+    // волосы
+    var hair = [];
+    var cap = new THREE.SphereGeometry(0.21, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
+    cap.translate(0, 0.3, -0.7);
+    hair.push(cap);
+    var strand = new THREE.BoxGeometry(0.34, 0.12, 0.4);
+    strand.translate(0, 0.2, -0.92);
+    hair.push(strand);
+    g.add(new THREE.Mesh(World.mergeGeometries(hair),
+      new THREE.MeshLambertMaterial({ color: 0xf3d67a })));
+
+    // тёмные очки
+    var glasses = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.08, 0.07),
+      new THREE.MeshLambertMaterial({ color: 0x23262b }));
+    glasses.position.set(0, 0.35, -0.84);
+    g.add(glasses);
+
+    // соломенная шляпа лежит рядом
+    var hat = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.06, 12),
+      new THREE.MeshLambertMaterial({ color: 0xe6c88a }));
+    hat.position.set(0.42, 0.06, 0.9);
+    hat.rotation.z = 0.25;
+    g.add(hat);
+
+    return g;
+  }
+
+  World.buildRider = function (kind) {
+    if (kind === 'emelya') return buildEmelya();
+    if (kind === 'blonde') return buildSunbather();
+    return null;
+  };
+
   /* ---------- Русская печь на колёсах ---------- */
 
-  World.buildStove = function (color, label) {
+  World.buildStove = function (color, label, rider) {
     var g = new THREE.Group();
     var t = stoveTextures();
 
@@ -873,35 +1016,35 @@
     lezhanka.translate(0, 2.68, 0);
     brickParts.push(lezhanka);
     var stack = new THREE.BoxGeometry(1.05, 1.75, 1.05);
-    stack.translate(0, 3.7, -1.05);
+    stack.translate(-0.6, 3.7, -1.05);
     brickParts.push(stack);
     var cap = new THREE.BoxGeometry(1.3, 0.22, 1.3);
-    cap.translate(0, 4.68, -1.05);
+    cap.translate(-0.6, 4.68, -1.05);
     brickParts.push(cap);
     g.add(new THREE.Mesh(World.mergeGeometries(brickParts),
       new THREE.MeshLambertMaterial({ map: t.brick })));
 
     // Перина в цвет игрока — по ней печку и узнают
-    var perina = new THREE.Mesh(new THREE.BoxGeometry(2.16, 0.34, 2.5),
+    var perina = new THREE.Mesh(new THREE.BoxGeometry(2.16, 0.34, 2.05),
       new THREE.MeshLambertMaterial({ map: t.fabric, color: color }));
-    perina.position.set(0, 2.97, 0.15);
+    perina.position.set(0, 2.97, 0.45);
     g.add(perina);
 
     // одеяло в горошек и подушка
-    var odeyalo = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.2, 1.0),
+    var odeyalo = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 0.52),
       new THREE.MeshLambertMaterial({ map: t.quilt, color: color }));
-    odeyalo.position.set(0, 3.19, 1.05);
+    odeyalo.position.set(0, 3.2, 1.38);
     g.add(odeyalo);
 
-    var podushka = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.34, 0.62),
+    var podushka = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.34, 0.6),
       new THREE.MeshLambertMaterial({ map: t.pillow }));
-    podushka.position.set(0, 3.28, -1.15);
+    podushka.position.set(0.62, 3.28, -0.85);
     g.add(podushka);
 
     // Дымник, заслонка и чугунок — тоже одной сеткой
     var iron = [];
     var dymnik = new THREE.BoxGeometry(0.95, 0.28, 0.95);
-    dymnik.translate(0, 4.93, -1.05);
+    dymnik.translate(-0.6, 4.93, -1.05);
     iron.push(dymnik);
     var zaslonka = new THREE.BoxGeometry(1.0, 1.0, 0.07);
     var mz = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(0.18, -0.32, 0.1));
@@ -909,7 +1052,7 @@
     zaslonka.applyMatrix4(mz);
     iron.push(zaslonka);
     var pot = new THREE.CylinderGeometry(0.3, 0.22, 0.38, 10);
-    pot.translate(-0.86, 3.0, -1.3);
+    pot.translate(0.95, 3.0, -1.32);
     iron.push(pot);
     g.add(new THREE.Mesh(World.mergeGeometries(iron),
       new THREE.MeshLambertMaterial({ color: 0x35302a })));
@@ -958,6 +1101,16 @@
     shadow.position.y = 0.05;
     g.add(shadow);
 
+    // пассажир на лежанке: Емеля или блондинка на солнце
+    var riderGroup = World.buildRider(rider);
+    if (riderGroup) {
+      // полулёжа, головой к подушке — так пассажира видно с догоняющей камеры
+      riderGroup.position.set(0.34, 3.3, 0.12);
+      riderGroup.rotation.x = 0.45;
+      riderGroup.scale.setScalar(0.92);
+      g.add(riderGroup);
+    }
+
     // подпись (только для живых игроков — чтобы не загораживать обзор)
     var lbl = null;
     if (label) {
@@ -968,7 +1121,7 @@
 
     g.userData = {
       wheels: wheels, fire: fire, fireGlow: fireGlow, label: lbl,
-      body: body, stripe: perina, quilt: odeyalo, vent: vent
+      body: body, stripe: perina, quilt: odeyalo, vent: vent, rider: riderGroup
     };
     return g;
   };

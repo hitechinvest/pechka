@@ -344,12 +344,16 @@
     finishOrder = [];
     var shuffledAi = AI_NAMES.slice().sort(function () { return Math.random() - 0.5; });
 
+    // на одних печах едет Емеля, на других загорает блондинка, пара печей пустые
+    var riders = ['emelya', 'blonde', 'emelya', 'blonde', 'emelya', 'blonde', null, null];
+    riders.sort(function () { return Math.random() - 0.5; });
+
     for (var i = 0; i < FIELD_SIZE; i++) {
       var isHuman = i < humanCount;
       var name = isHuman ? ('Игрок ' + (i + 1)) : shuffledAi[i - humanCount];
       var color = COLORS[i % COLORS.length];
       var labelText = isHuman ? (name + ' [' + HUMAN_KEYS[i].short + ']') : null;
-      var mesh = World.buildStove(color, labelText);
+      var mesh = World.buildStove(color, labelText, riders[i]);
       scene.add(mesh);
 
       var row = Math.floor(i / 2);
@@ -362,6 +366,7 @@
         keys: isHuman ? HUMAN_KEYS[i] : null,
         keyLabel: isHuman ? HUMAN_KEYS[i].label : null,
         canBoost: isHuman && i === 0,      // супер-пар только у первого игрока
+        rider: riders[i],
         mesh: mesh,
         lane: (col === 0 ? -1 : 1) * (2.6 + row * 1.75),
         steer: 0,
@@ -589,8 +594,10 @@
       else r.speed = Math.max(0, r.speed - BRAKE * dt);
       if (r.speed > maxV) r.speed = Math.max(maxV, r.speed - BRAKE * 0.8 * dt);
 
-      // руль: на малой скорости печка почти не слушается
-      r.lane += r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9);
+      // Руль: на малой скорости печка почти не слушается.
+      // Внимание: track.sideAt() смотрит ВЛЕВО от движения, поэтому
+      // «вправо» (steer = +1) — это уменьшение полосы.
+      r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9);
       r.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, r.lane));
 
       if (onEdge && r.speed > 3) {
@@ -671,7 +678,8 @@
       if (Math.abs(target) > EDGE_LANE) target = ob.obj.lane - dir * 3.8;
       target = Math.max(-EDGE_LANE, Math.min(EDGE_LANE, target));
     }
-    var diff = target - r.lane;
+    // steer > 0 — руль вправо, а вправо полоса уменьшается
+    var diff = r.lane - target;
     if (Math.abs(diff) < 0.25) return 0;
     return Math.max(-1, Math.min(1, diff / 2.2)) * 0.85;
   }
@@ -728,7 +736,7 @@
       r.smokeAcc += dt * far * (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0) + (r.boosting ? 14 : 0));
       while (r.smokeAcc > 1) {
         r.smokeAcc -= 1;
-        var pipe = new THREE.Vector3(0, 5.15, -1.05).applyEuler(r.mesh.rotation).add(r.mesh.position);
+        var pipe = new THREE.Vector3(-0.6, 5.15, -1.05).applyEuler(r.mesh.rotation).add(r.mesh.position);
         var back = track.tangentAt(r.dist).multiplyScalar(-r.speed * 0.25);
         back.y = 2.2 + Math.random() * 1.4;
         back.x += (Math.random() - 0.5) * 1.4;
@@ -1320,6 +1328,14 @@
     document.getElementById('key-hints').innerHTML = html;
   }
 
+  /* Насколько печка стоит правее осевой — считается от геометрии, а не от
+     знака полосы, поэтому годится для проверки, куда именно её уводит руль. */
+  function offsetRight(r) {
+    var center = track.pointAt(r.dist);
+    var right = new THREE.Vector3().crossVectors(track.tangentAt(r.dist), new THREE.Vector3(0, 1, 0));
+    return r.mesh.position.clone().sub(center).dot(right.normalize());
+  }
+
   /* Служебный снимок состояния — удобно для отладки из консоли. */
   Game.debug = function () {
     return {
@@ -1339,8 +1355,20 @@
         return {
           name: r.name, human: r.isHuman, lap: r.lap, dq: r.dq, finished: r.finished,
           kmh: Math.round(r.speed * 3.6), dist: Math.round(r.dist), place: r.place,
-          lane: +r.lane.toFixed(1), steam: Math.round(r.steam), boosting: r.boosting,
-          reason: r.dqReason || null
+          lane: +r.lane.toFixed(1), offsetRight: +offsetRight(r).toFixed(1),
+          steam: Math.round(r.steam), boosting: r.boosting,
+          reason: r.dqReason || null, rider: r.rider,
+          throttle: r.throttle,
+          blocker: (function () {
+            if (r.isHuman) return null;
+            var ob = obstacleAhead(r, 30);
+            if (!ob) return null;
+            return (ob.obj.isGranny ? 'бабушка' : ob.obj.name) + ' ' + Math.round(ob.gap) + 'м';
+          })(),
+          light: (function () {
+            var ni = nextIntersection(r);
+            return ni.inter.state + ' ' + Math.round(ni.toStop) + 'м';
+          })()
         };
       })
     };
