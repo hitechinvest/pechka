@@ -202,6 +202,45 @@
     }
   };
 
+  /* Удар тростью по печи и возмущённый крик бабушки. */
+  Sfx.prototype.caneWhack = function (vol, shout) {
+    this.init();
+    if (!this.ctx || !vol || vol < 0.03) return;
+    var t = this.ctx.currentTime;
+
+    // сухой деревянный стук
+    var o = this.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(260, t);
+    o.frequency.exponentialRampToValueAtTime(90, t + 0.08);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.2 * vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.14);
+    this.noise(0.07, 0.12 * vol, 2600);
+
+    if (!shout) return;
+    // «ай-яй-яй»: три коротких вскрика
+    for (var i = 0; i < 3; i++) {
+      var v = this.ctx.createOscillator();
+      v.type = 'triangle';
+      var at = t + 0.05 + i * 0.16;
+      var base = 640 + i * 70;
+      v.frequency.setValueAtTime(base, at);
+      v.frequency.linearRampToValueAtTime(base * 1.25, at + 0.05);
+      v.frequency.linearRampToValueAtTime(base * 0.8, at + 0.13);
+      var vg = this.ctx.createGain();
+      vg.gain.setValueAtTime(0.0001, at);
+      vg.gain.linearRampToValueAtTime(0.13 * vol, at + 0.03);
+      vg.gain.exponentialRampToValueAtTime(0.0001, at + 0.15);
+      v.connect(vg).connect(this.master);
+      v.start(at);
+      v.stop(at + 0.17);
+    }
+  };
+
   /* Выхлоп пара при включении турбо. */
   Sfx.prototype.steamBurst = function (vol) {
     this.init();

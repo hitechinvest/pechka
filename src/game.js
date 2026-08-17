@@ -125,7 +125,10 @@
         dir: 1,
         speed: 1.4,
         walk: 0,
-        angry: 0
+        angry: 0,
+        whack: 0,          // сколько уже колотит печку
+        whackCooldown: 0,  // после нагоняя идёт дальше молча
+        knockTimer: 0
       });
     }
   }
@@ -151,6 +154,9 @@
     free.speed = 1.1 + Math.random() * 0.9;
     free.walk = Math.random() * 6;
     free.angry = 0;
+    free.whack = 0;
+    free.whackCooldown = 0;
+    free.knockTimer = 0;
     free.mesh.visible = true;
     return free;
   }
@@ -203,14 +209,34 @@
       var g = grannies[i];
       if (!g.active) continue;
 
+      var target = racerNextTo(g);          // кто подъехал в упор
+      g.walk += dt * 6;
+
       if (g.angry > 0) {
+        // только что сбили: стоит и потрясает тростью
         g.angry -= dt;
         g.mesh.userData.armR.rotation.z = -2.2 + Math.sin(g.angry * 18) * 0.5;
+      } else if (target && g.whackCooldown <= 0) {
+        // колотит печку тростью и кричит, но дорогу переходить не забывает,
+        // иначе за ней намертво встаёт весь поток
+        g.whack += dt;
+        g.mesh.userData.armR.rotation.z = -1.9 + Math.sin(g.whack * 13) * 0.85;
+        g.knockTimer -= dt;
+        if (g.knockTimer <= 0) {
+          g.knockTimer = 0.44;
+          var dcam = camera.position.distanceTo(g.mesh.position);
+          sfx.caneWhack(Math.max(0, 1 - dcam / 90), Math.random() < 0.6);
+        }
+        // от такой ругани печка теряет ход
+        target.speed = Math.max(0, target.speed - 6 * dt);
+        g.lane += g.dir * g.speed * 0.4 * dt;
+        if (g.whack > 3) { g.whack = 0; g.whackCooldown = 4; }
       } else {
+        g.whack = 0;
+        if (g.whackCooldown > 0) g.whackCooldown -= dt;
         g.mesh.userData.armR.rotation.z = Math.sin(g.walk) * 0.35;
         g.lane += g.dir * g.speed * dt;
       }
-      g.walk += dt * 6;
       g.mesh.userData.armL.rotation.z = -Math.sin(g.walk) * 0.25;
 
       var p = track.pointAt(g.dist);
@@ -218,13 +244,28 @@
       var t = track.tangentAt(g.dist);
       g.mesh.position.copy(p).addScaledVector(n, g.lane);
       g.mesh.position.y = Math.abs(Math.sin(g.walk)) * 0.045;
-      g.mesh.rotation.y = Math.atan2(t.x, t.z) + g.dir * Math.PI / 2;
+      var faceDir = g.dir;
+      if (target) faceDir = (target.lane > g.lane) ? 1 : -1;   // разворачивается к нарушителю
+      g.mesh.rotation.y = Math.atan2(t.x, t.z) + faceDir * Math.PI / 2;
       g.mesh.rotation.z = Math.sin(g.walk) * 0.05;
 
       // ушла с дороги или все уже проехали — убираем
       var gone = Math.abs(g.lane) > MAX_LANE + 4 && (g.lane * g.dir) > 0;
       if (gone) { g.active = false; g.mesh.visible = false; }
     }
+  }
+
+  /* Печка, которая подъехала к бабушке вплотную (но пока не сбила). */
+  function racerNextTo(g) {
+    var best = null, bestGap = 6.5;
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished) continue;
+      var along = Math.abs(track.norm(g.dist - r.dist + track.length / 2) - track.length / 2);
+      var across = Math.abs(g.lane - r.lane);
+      if (along < bestGap && across < 4.2) { bestGap = along; best = r; }
+    }
+    return best;
   }
 
   /* Сбил бабушку — снятие с гонки. */
@@ -640,11 +681,13 @@
     var st = ni.inter.state;
     var toStop = ni.toStop;
 
-    // бабушку объехать выходит не всегда — тогда тормозим
+    // бабушку объехать выходит не всегда — тогда тормозим,
+    // но если уже почти встали, всё-таки крадёмся мимо
     var ob = obstacleAhead(r, 26);
     if (ob && ob.obj.isGranny) {
       var needG = (r.speed * r.speed) / (2 * BRAKE) + r.speed * r.ai.reaction + 4;
-      if (ob.gap < needG && Math.abs(ob.obj.lane - r.lane) < 2.6) return false;
+      var close = Math.abs(ob.obj.lane - r.lane) < 2.6;
+      if (ob.gap < needG && close && r.speed > 3) return false;
     }
 
     // держится у стоп-линии, пока красный
@@ -672,17 +715,20 @@
     for (var i = 0; i < u.wheels.length; i++) u.wheels[i].rotation.x -= spin;
 
     r.bob += dt * (2 + r.speed * 0.6);
-    u.body.position.y = 1.35 + Math.sin(r.bob) * 0.035 * Math.min(1, r.speed / 8);
+    u.body.position.y = Math.sin(r.bob) * 0.04 * Math.min(1, r.speed / 8);
     var flick = 0.85 + Math.sin(r.bob * 3.3) * 0.15 + (r.throttle ? 0.35 : 0);
     if (r.boosting) flick *= 1.7;
     u.fireGlow.scale.set(3 * flick, 2.4 * flick, 1);
+    if (u.vent) u.vent.scale.set(1.7 * flick, 1.1 * flick, 1);
     u.fire.material.color.setHex(r.boosting ? 0xfff0a0 : 0xff8a24);
 
     if (!r.dq) {
-      r.smokeAcc += dt * (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0) + (r.boosting ? 14 : 0));
+      // у далёких печек дыма меньше: спрайты — самая дорогая часть кадра
+      var far = camera.position.distanceTo(r.mesh.position) > 130 ? 0.35 : 1;
+      r.smokeAcc += dt * far * (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0) + (r.boosting ? 14 : 0));
       while (r.smokeAcc > 1) {
         r.smokeAcc -= 1;
-        var pipe = new THREE.Vector3(0, 5.0, -1.15).applyEuler(r.mesh.rotation).add(r.mesh.position);
+        var pipe = new THREE.Vector3(0, 5.15, -1.05).applyEuler(r.mesh.rotation).add(r.mesh.position);
         var back = track.tangentAt(r.dist).multiplyScalar(-r.speed * 0.25);
         back.y = 2.2 + Math.random() * 1.4;
         back.x += (Math.random() - 0.5) * 1.4;
@@ -726,17 +772,25 @@
     var desired = new THREE.Vector3();
     var look = r.mesh.position.clone();
 
+    // Камера идёт по самой трассе позади печки: тогда на поворотах печь
+    // остаётся в центре кадра, а не уезжает к краю.
+    function behind(metres, height, laneShare) {
+      var d = r.dist - metres;
+      var pt = track.pointAt(d);
+      var side = track.sideAt(d);
+      return pt.clone().addScaledVector(side, r.lane * laneShare).add(new THREE.Vector3(0, height, 0));
+    }
+
     if (cameraMode === 0) {
-      desired.copy(r.mesh.position).addScaledVector(t, r.boosting ? -18 : -15)
-        .add(new THREE.Vector3(0, r.boosting ? 8.2 : 7.5, 0));
-      look.addScaledVector(t, 14);
-      look.y += 2.2;
+      desired.copy(behind(r.boosting ? 18.5 : 16, r.boosting ? 7.4 : 6.8, 0.85));
+      look.addScaledVector(t, 13);
+      look.y += 2.6;
     } else if (cameraMode === 1) {
-      desired.copy(r.mesh.position).addScaledVector(t, -30).add(new THREE.Vector3(0, 18, 0));
-      look.addScaledVector(t, 20);
+      desired.copy(behind(30, 15, 0.5));
+      look.addScaledVector(t, 24);
       look.y += 3;
     } else {
-      desired.copy(r.mesh.position).add(new THREE.Vector3(0, 62, 0)).addScaledVector(t, -6);
+      desired.copy(r.mesh.position).add(new THREE.Vector3(0, 70, 0)).addScaledVector(t, -7);
       look.y += 1;
     }
 
@@ -1275,7 +1329,10 @@
       trackLength: Math.round(track ? track.length : 0),
       lights: intersections ? intersections.map(function (i) { return i.state; }) : [],
       grannies: grannies.filter(function (g) { return g.active; }).map(function (g) {
-        return { dist: Math.round(g.dist), lane: +g.lane.toFixed(1), angry: g.angry > 0 };
+        return {
+          dist: Math.round(g.dist), lane: +g.lane.toFixed(1),
+          angry: g.angry > 0, whacking: g.whack > 0
+        };
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
       racers: racers.map(function (r) {
@@ -1316,6 +1373,27 @@
     });
   };
 
+  /* Отладка: где камера относительно печки в фокусе. */
+  Game.cameraInfo = function () {
+    var f = focusRacer();
+    if (!f) return null;
+    // куда печка попадает на экране: 0,0 — левый верх, 1,1 — правый низ
+    var top = f.mesh.position.clone(); top.y += 5.1;
+    var mid = f.mesh.position.clone(); mid.y += 1.5;
+    function project(v) {
+      var q = v.clone().project(camera);
+      return { x: +((q.x + 1) / 2).toFixed(2), y: +((1 - q.y) / 2).toFixed(2) };
+    }
+    return {
+      distance: +camera.position.distanceTo(f.mesh.position).toFixed(1),
+      camY: +camera.position.y.toFixed(1),
+      speed: Math.round(f.speed * 3.6),
+      mode: cameraMode,
+      screenTop: project(top),
+      screenMid: project(mid)
+    };
+  };
+
   Game.renderInfo = function () {
     return renderer ? {
       calls: renderer.info.render.calls,
@@ -1329,4 +1407,5 @@
   global.__dbg = Game.debug;
   global.__renderInfo = Game.renderInfo;
   global.__ground = Game.groundUnder;
+  global.__cam = Game.cameraInfo;
 })(window);

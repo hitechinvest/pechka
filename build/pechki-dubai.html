@@ -567,6 +567,45 @@
     }
   };
 
+  /* Удар тростью по печи и возмущённый крик бабушки. */
+  Sfx.prototype.caneWhack = function (vol, shout) {
+    this.init();
+    if (!this.ctx || !vol || vol < 0.03) return;
+    var t = this.ctx.currentTime;
+
+    // сухой деревянный стук
+    var o = this.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(260, t);
+    o.frequency.exponentialRampToValueAtTime(90, t + 0.08);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.2 * vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.14);
+    this.noise(0.07, 0.12 * vol, 2600);
+
+    if (!shout) return;
+    // «ай-яй-яй»: три коротких вскрика
+    for (var i = 0; i < 3; i++) {
+      var v = this.ctx.createOscillator();
+      v.type = 'triangle';
+      var at = t + 0.05 + i * 0.16;
+      var base = 640 + i * 70;
+      v.frequency.setValueAtTime(base, at);
+      v.frequency.linearRampToValueAtTime(base * 1.25, at + 0.05);
+      v.frequency.linearRampToValueAtTime(base * 0.8, at + 0.13);
+      var vg = this.ctx.createGain();
+      vg.gain.setValueAtTime(0.0001, at);
+      vg.gain.linearRampToValueAtTime(0.13 * vol, at + 0.03);
+      vg.gain.exponentialRampToValueAtTime(0.0001, at + 0.15);
+      v.connect(vg).connect(this.master);
+      v.start(at);
+      v.stop(at + 0.17);
+    }
+  };
+
   /* Выхлоп пара при включении турбо. */
   Sfx.prototype.steamBurst = function (vol) {
     this.init();
@@ -1538,71 +1577,369 @@
 
   /* ---------- Печка ---------- */
 
+  /* ---------- Текстуры русской печи ---------- */
+
+  var TEX = {};   // общие текстуры печей: рисуем один раз на всех
+
+  /* Белёная штукатурка с разводами и трещинками. */
+  World.whitewashTexture = function () {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#f1ebdd';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 900; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.5)' : 'rgba(196,180,152,0.22)';
+        g.fillRect(Math.random() * w, Math.random() * h, 3 + Math.random() * 5, 2 + Math.random() * 4);
+      }
+      // трещинки и подпалины у низа
+      g.strokeStyle = 'rgba(150,132,104,0.35)';
+      for (var k = 0; k < 7; k++) {
+        g.lineWidth = 0.8;
+        g.beginPath();
+        var x = Math.random() * w, y = Math.random() * h;
+        g.moveTo(x, y);
+        g.lineTo(x + (Math.random() - 0.5) * 26, y + Math.random() * 20);
+        g.stroke();
+      }
+      var grd = g.createLinearGradient(0, h * 0.7, 0, h);
+      grd.addColorStop(0, 'rgba(120,100,74,0)');
+      grd.addColorStop(1, 'rgba(120,100,74,0.28)');
+      g.fillStyle = grd;
+      g.fillRect(0, h * 0.7, w, h * 0.3);
+    });
+  };
+
+  /* Народная роспись: красно-синий узор по белому — для пояска вокруг печи. */
+  World.ornamentTexture = function () {
+    return canvasTexture(256, 64, function (g, w, h) {
+      g.fillStyle = '#f6f1e4';
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = '#c0392b';
+      g.fillRect(0, 4, w, 3);
+      g.fillRect(0, h - 7, w, 3);
+      for (var x = 0; x < w; x += 32) {
+        // ромб
+        g.fillStyle = '#c0392b';
+        g.beginPath();
+        g.moveTo(x + 16, 14); g.lineTo(x + 27, h / 2); g.lineTo(x + 16, h - 14); g.lineTo(x + 5, h / 2);
+        g.closePath(); g.fill();
+        // синяя серединка и точки
+        g.fillStyle = '#2b5fa8';
+        g.beginPath(); g.arc(x + 16, h / 2, 4.5, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#e8a33d';
+        g.beginPath(); g.arc(x + 32, h / 2, 3, 0, Math.PI * 2); g.fill();
+      }
+    }, 4, 1);
+  };
+
+  /* Передняя стенка: устье-арка с закопчённым сводом и роспись сверху. */
+  World.stoveFrontTexture = function () {
+    return canvasTexture(256, 160, function (g, w, h) {
+      g.fillStyle = '#f1ebdd';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 700; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.45)' : 'rgba(196,180,152,0.2)';
+        g.fillRect(Math.random() * w, Math.random() * h, 3, 3);
+      }
+
+      // роспись по верху
+      g.fillStyle = '#c0392b';
+      g.fillRect(0, 9, w, 3);
+      for (var x = 12; x < w; x += 34) {
+        g.fillStyle = '#c0392b';
+        g.beginPath();
+        g.moveTo(x, 26); g.lineTo(x + 9, 18); g.lineTo(x + 18, 26); g.lineTo(x + 9, 34);
+        g.closePath(); g.fill();
+        g.fillStyle = '#2b5fa8';
+        g.beginPath(); g.arc(x + 9, 26, 3, 0, Math.PI * 2); g.fill();
+      }
+
+      // копоть над устьем
+      var soot = g.createRadialGradient(w / 2, 62, 5, w / 2, 62, 78);
+      soot.addColorStop(0, 'rgba(48,40,34,0.55)');
+      soot.addColorStop(1, 'rgba(48,40,34,0)');
+      g.fillStyle = soot;
+      g.fillRect(w / 2 - 80, 30, 160, 90);
+
+      // устье: кирпичная обводка и чёрный проём с аркой
+      function arch(pad, color) {
+        g.fillStyle = color;
+        g.beginPath();
+        g.moveTo(w / 2 - 54 - pad, h - 6);
+        g.lineTo(w / 2 - 54 - pad, 88 - pad);
+        g.quadraticCurveTo(w / 2, 44 - pad * 1.6, w / 2 + 54 + pad, 88 - pad);
+        g.lineTo(w / 2 + 54 + pad, h - 6);
+        g.closePath();
+        g.fill();
+      }
+      arch(7, '#a8563c');
+      arch(0, '#17130f');
+
+      // под (пол устья) и намёк на дрова
+      g.fillStyle = '#2b2119';
+      g.fillRect(w / 2 - 54, h - 26, 108, 20);
+      g.strokeStyle = '#5a4530';
+      g.lineWidth = 5;
+      for (var d = -1; d <= 1; d++) {
+        g.beginPath();
+        g.moveTo(w / 2 - 34 + d * 8, h - 12);
+        g.lineTo(w / 2 + 36 + d * 8, h - 18);
+        g.stroke();
+      }
+    });
+  };
+
+  /* Бок печи: печурки-нишки, где сушат рукавицы. */
+  World.stoveSideTexture = function () {
+    return canvasTexture(256, 128, function (g, w, h) {
+      g.fillStyle = '#f1ebdd';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 600; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.45)' : 'rgba(196,180,152,0.2)';
+        g.fillRect(Math.random() * w, Math.random() * h, 3, 3);
+      }
+      for (var n = 0; n < 2; n++) {
+        var cx = 78 + n * 100, cy = 76;
+        g.fillStyle = '#c9bda6';
+        g.beginPath();
+        g.moveTo(cx - 26, cy + 26);
+        g.lineTo(cx - 26, cy - 6);
+        g.quadraticCurveTo(cx, cy - 30, cx + 26, cy - 6);
+        g.lineTo(cx + 26, cy + 26);
+        g.closePath();
+        g.fill();
+        g.fillStyle = '#6d6250';
+        g.beginPath();
+        g.moveTo(cx - 20, cy + 26);
+        g.lineTo(cx - 20, cy - 4);
+        g.quadraticCurveTo(cx, cy - 24, cx + 20, cy - 4);
+        g.lineTo(cx + 20, cy + 26);
+        g.closePath();
+        g.fill();
+      }
+      g.fillStyle = '#c0392b';
+      g.fillRect(0, 16, w, 3);
+      g.fillStyle = '#2b5fa8';
+      for (var x = 10; x < w; x += 26) { g.beginPath(); g.arc(x, 28, 3.5, 0, Math.PI * 2); g.fill(); }
+    });
+  };
+
+  /* Полосатая перина и одеяло в горошек — их красим в цвет игрока. */
+  World.fabricTexture = function () {
+    return canvasTexture(64, 64, function (g, w, h) {
+      g.fillStyle = '#ffffff';
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(0,0,0,0.16)';
+      for (var y = 0; y < h; y += 12) g.fillRect(0, y, w, 5);
+    }, 3, 2);
+  };
+
+  World.quiltTexture = function () {
+    return canvasTexture(64, 64, function (g, w, h) {
+      g.fillStyle = '#ffffff';
+      g.fillRect(0, 0, w, h);
+      g.strokeStyle = 'rgba(0,0,0,0.22)';
+      g.lineWidth = 2;
+      for (var i = -h; i < w; i += 16) {
+        g.beginPath(); g.moveTo(i, 0); g.lineTo(i + h, h); g.stroke();
+        g.beginPath(); g.moveTo(i + h, 0); g.lineTo(i, h); g.stroke();
+      }
+      g.fillStyle = 'rgba(0,0,0,0.14)';
+      for (var y = 8; y < h; y += 16) for (var x = 8; x < w; x += 16) {
+        g.beginPath(); g.arc(x, y, 2.5, 0, Math.PI * 2); g.fill();
+      }
+    }, 2, 1);
+  };
+
+  World.pillowTexture = function () {
+    return canvasTexture(64, 64, function (g, w, h) {
+      g.fillStyle = '#fbf6ec';
+      g.fillRect(0, 0, w, h);
+      g.strokeStyle = 'rgba(192,57,43,0.5)';
+      g.lineWidth = 2;
+      g.strokeRect(5, 5, w - 10, h - 10);
+      g.fillStyle = 'rgba(43,95,168,0.35)';
+      for (var x = 12; x < w - 8; x += 12) { g.beginPath(); g.arc(x, h - 12, 3, 0, Math.PI * 2); g.fill(); }
+    });
+  };
+
+  /* Деревянное колесо со спицами — рисуем на торцах цилиндра. */
+  World.wheelTexture = function () {
+    return canvasTexture(128, 128, function (g, w, h) {
+      var c = w / 2;
+      g.fillStyle = '#6f5636';
+      g.beginPath(); g.arc(c, c, c - 2, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#8a6a44';
+      g.beginPath(); g.arc(c, c, c - 12, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#4a3826';
+      g.beginPath(); g.arc(c, c, c - 20, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = '#8a6a44';
+      g.lineWidth = 7;
+      for (var i = 0; i < 6; i++) {
+        var a = i / 6 * Math.PI * 2;
+        g.beginPath();
+        g.moveTo(c, c);
+        g.lineTo(c + Math.cos(a) * (c - 14), c + Math.sin(a) * (c - 14));
+        g.stroke();
+      }
+      g.fillStyle = '#5c4830';
+      g.beginPath(); g.arc(c, c, 13, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#2f251a';
+      g.beginPath(); g.arc(c, c, 5, 0, Math.PI * 2); g.fill();
+    });
+  };
+
+  function stoveTextures() {
+    if (TEX.ready) return TEX;
+    TEX.whitewash = World.whitewashTexture();
+    TEX.front = World.stoveFrontTexture();
+    TEX.side = World.stoveSideTexture();
+    TEX.ornament = World.ornamentTexture();
+    TEX.brick = World.brickTexture('#a8563c');
+    TEX.fabric = World.fabricTexture();
+    TEX.quilt = World.quiltTexture();
+    TEX.pillow = World.pillowTexture();
+    TEX.wheel = World.wheelTexture();
+    TEX.ready = true;
+    return TEX;
+  }
+
+  /* ---------- Русская печь на колёсах ---------- */
+
   World.buildStove = function (color, label) {
     var g = new THREE.Group();
-    var brick = World.brickTexture('#a8563c');
-    var brickMat = new THREE.MeshLambertMaterial({ map: brick });
+    var t = stoveTextures();
 
-    var body = new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.0, 3.6), brickMat);
-    body.position.y = 1.35;
+    // Белёный корпус: подпечье, основное тело и карниз — одной сеткой
+    var mass = [];
+    var podpech = new THREE.BoxGeometry(2.74, 0.85, 3.74);
+    podpech.translate(0, 0.43, 0);
+    mass.push(podpech);
+    var corpus = new THREE.BoxGeometry(2.56, 1.5, 3.56);
+    corpus.translate(0, 1.6, 0);
+    mass.push(corpus);
+    var karniz = new THREE.BoxGeometry(2.8, 0.2, 3.8);
+    karniz.translate(0, 2.45, 0);
+    mass.push(karniz);
+    var body = new THREE.Mesh(World.mergeGeometries(mass),
+      new THREE.MeshLambertMaterial({ map: t.whitewash }));
     g.add(body);
 
-    // плита сверху
-    var plate = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.22, 3.8),
-      new THREE.MeshLambertMaterial({ color: 0x3a3d42 }));
-    plate.position.y = 2.45;
-    g.add(plate);
+    // Устье: передняя стенка с аркой
+    var front = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.45),
+      new THREE.MeshLambertMaterial({ map: t.front }));
+    front.position.set(0, 1.58, 1.79);
+    g.add(front);
 
-    // кольца плиты
-    for (var i = 0; i < 2; i++) {
-      var ring = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.06, 14),
-        new THREE.MeshLambertMaterial({ color: 0x24262a }));
-      ring.position.set(-0.6 + i * 1.2, 2.58, 0.6);
-      g.add(ring);
+    // печурки по бокам — обе стенки одной сеткой
+    var sides = [];
+    for (var sx = -1; sx <= 1; sx += 2) {
+      var side = new THREE.PlaneGeometry(3.4, 1.45);
+      var ms = new THREE.Matrix4().makeRotationY(sx * Math.PI / 2);
+      ms.setPosition(sx * 1.29, 1.58, 0);
+      side.applyMatrix4(ms);
+      sides.push(side);
     }
+    g.add(new THREE.Mesh(World.mergeGeometries(sides),
+      new THREE.MeshLambertMaterial({ map: t.side })));
 
-    // труба
-    var pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 2.4, 10),
-      new THREE.MeshLambertMaterial({ color: 0x5a5f66 }));
-    pipe.position.set(0, 3.5, -1.15);
-    g.add(pipe);
-    var pipeTop = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.36, 0.35, 10),
-      new THREE.MeshLambertMaterial({ color: 0x4a4e54 }));
-    pipeTop.position.set(0, 4.78, -1.15);
-    g.add(pipeTop);
+    // задняя стенка: печурки и тёплый отсвет из поддувала
+    var back = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.45),
+      new THREE.MeshLambertMaterial({ map: t.side }));
+    back.position.set(0, 1.58, -1.79);
+    back.rotation.y = Math.PI;
+    g.add(back);
 
-    // дверца топки + огонь
-    var door = new THREE.Mesh(new THREE.BoxGeometry(1.35, 1.0, 0.14),
-      new THREE.MeshLambertMaterial({ color: 0x2b2b30 }));
-    door.position.set(0, 1.15, 1.83);
-    g.add(door);
-    var fire = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 0.7),
+    var vent = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: World.glowTexture(255, 140, 50), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    vent.scale.set(1.7, 1.1, 1);
+    vent.position.set(0, 0.5, -1.9);
+    g.add(vent);
+
+    // поясок с росписью под карнизом
+    var band = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.3, 3.6),
+      new THREE.MeshLambertMaterial({ map: t.ornament }));
+    band.position.y = 2.24;
+    g.add(band);
+
+    // Лежанка и труба — общий кирпич, значит одна сетка
+    var brickParts = [];
+    var lezhanka = new THREE.BoxGeometry(2.5, 0.26, 3.5);
+    lezhanka.translate(0, 2.68, 0);
+    brickParts.push(lezhanka);
+    var stack = new THREE.BoxGeometry(1.05, 1.75, 1.05);
+    stack.translate(0, 3.7, -1.05);
+    brickParts.push(stack);
+    var cap = new THREE.BoxGeometry(1.3, 0.22, 1.3);
+    cap.translate(0, 4.68, -1.05);
+    brickParts.push(cap);
+    g.add(new THREE.Mesh(World.mergeGeometries(brickParts),
+      new THREE.MeshLambertMaterial({ map: t.brick })));
+
+    // Перина в цвет игрока — по ней печку и узнают
+    var perina = new THREE.Mesh(new THREE.BoxGeometry(2.16, 0.34, 2.5),
+      new THREE.MeshLambertMaterial({ map: t.fabric, color: color }));
+    perina.position.set(0, 2.97, 0.15);
+    g.add(perina);
+
+    // одеяло в горошек и подушка
+    var odeyalo = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.2, 1.0),
+      new THREE.MeshLambertMaterial({ map: t.quilt, color: color }));
+    odeyalo.position.set(0, 3.19, 1.05);
+    g.add(odeyalo);
+
+    var podushka = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.34, 0.62),
+      new THREE.MeshLambertMaterial({ map: t.pillow }));
+    podushka.position.set(0, 3.28, -1.15);
+    g.add(podushka);
+
+    // Дымник, заслонка и чугунок — тоже одной сеткой
+    var iron = [];
+    var dymnik = new THREE.BoxGeometry(0.95, 0.28, 0.95);
+    dymnik.translate(0, 4.93, -1.05);
+    iron.push(dymnik);
+    var zaslonka = new THREE.BoxGeometry(1.0, 1.0, 0.07);
+    var mz = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(0.18, -0.32, 0.1));
+    mz.setPosition(1.05, 0.62, 1.72);
+    zaslonka.applyMatrix4(mz);
+    iron.push(zaslonka);
+    var pot = new THREE.CylinderGeometry(0.3, 0.22, 0.38, 10);
+    pot.translate(-0.86, 3.0, -1.3);
+    iron.push(pot);
+    g.add(new THREE.Mesh(World.mergeGeometries(iron),
+      new THREE.MeshLambertMaterial({ color: 0x35302a })));
+
+    // Огонь в устье
+    var fire = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.72),
       new THREE.MeshBasicMaterial({ color: 0xff8a24 }));
-    fire.position.set(0, 1.15, 1.92);
+    fire.position.set(0, 1.34, 1.83);
     g.add(fire);
     var fireGlow = new THREE.Sprite(new THREE.SpriteMaterial({
       map: World.glowTexture(255, 150, 40), transparent: true,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
     fireGlow.scale.set(3, 2.4, 1);
-    fireGlow.position.set(0, 1.15, 2.0);
+    fireGlow.position.set(0, 1.34, 1.95);
     g.add(fireGlow);
 
-    // цветная полоса игрока
-    var stripe = new THREE.Mesh(new THREE.BoxGeometry(2.56, 0.36, 3.66),
-      new THREE.MeshLambertMaterial({ color: color }));
-    stripe.position.y = 2.12;
-    g.add(stripe);
+    // Кочерга прислонена к боку
+    var kocherga = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.9, 6),
+      new THREE.MeshLambertMaterial({ color: 0x6f5636 }));
+    kocherga.position.set(-1.2, 1.0, 1.5);
+    kocherga.rotation.set(0.25, 0, 0.42);
+    g.add(kocherga);
 
-    // колёса
-    var wheelMat = new THREE.MeshLambertMaterial({ color: 0x1c1c20 });
+    // Деревянные колёса со спицами
+    var wheelSide = new THREE.MeshLambertMaterial({ color: 0x6f5636 });
+    var wheelFace = new THREE.MeshLambertMaterial({ map: t.wheel });
     var wheels = [];
     for (var wx = -1; wx <= 1; wx += 2) {
       for (var wz = -1; wz <= 1; wz += 2) {
-        // ось вращения колеса — X печки, поэтому вращаем родительский пивот
         var pivot = new THREE.Group();
-        pivot.position.set(wx * 1.25, 0.62, wz * 1.25);
-        var wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.42, 12), wheelMat);
+        pivot.position.set(wx * 1.3, 0.7, wz * 1.3);
+        var wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.34, 14),
+          [wheelSide, wheelFace, wheelFace]);
         wheel.rotation.z = Math.PI / 2;
         pivot.add(wheel);
         g.add(pivot);
@@ -1611,7 +1948,7 @@
     }
 
     // тень-пятно
-    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 5.6),
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 5.8),
       new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.05;
@@ -1625,7 +1962,10 @@
       g.add(lbl);
     }
 
-    g.userData = { wheels: wheels, fire: fire, fireGlow: fireGlow, label: lbl, body: body, stripe: stripe };
+    g.userData = {
+      wheels: wheels, fire: fire, fireGlow: fireGlow, label: lbl,
+      body: body, stripe: perina, quilt: odeyalo, vent: vent
+    };
     return g;
   };
 
@@ -1655,15 +1995,16 @@
     head.position.y = 1.6;
     g.add(head);
 
-    // платок
-    var scarf = new THREE.Mesh(new THREE.SphereGeometry(0.235, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.62),
-      new THREE.MeshLambertMaterial({ color: kerchief }));
-    scarf.position.y = 1.62;
-    g.add(scarf);
-    var knot = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6),
-      new THREE.MeshLambertMaterial({ color: kerchief }));
-    knot.position.set(0, 1.45, -0.16);
-    g.add(knot);
+    // платок с узелком — одной сеткой
+    var scarfParts = [];
+    var scarf = new THREE.SphereGeometry(0.235, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
+    scarf.translate(0, 1.62, 0);
+    scarfParts.push(scarf);
+    var knot = new THREE.SphereGeometry(0.1, 8, 6);
+    knot.translate(0, 1.45, -0.16);
+    scarfParts.push(knot);
+    g.add(new THREE.Mesh(World.mergeGeometries(scarfParts),
+      new THREE.MeshLambertMaterial({ color: kerchief })));
 
     // руки: одна с авоськой, вторая может грозить кулаком
     var skinMat = new THREE.MeshLambertMaterial({ color: 0xe8c39a });
@@ -1686,6 +2027,20 @@
     bag.position.set(-0.34, 0.88, 0.04);
     g.add(bag);
 
+    // трость: висит в правой руке и качается вместе с ней
+    var caneParts = [];
+    var stick = new THREE.CylinderGeometry(0.035, 0.048, 1.0, 6);
+    stick.translate(0, -1.05, 0.02);
+    caneParts.push(stick);
+    var handle = new THREE.CylinderGeometry(0.036, 0.036, 0.24, 6);
+    var mh = new THREE.Matrix4().makeRotationZ(Math.PI / 2.4);
+    mh.setPosition(0.09, -0.53, 0.02);
+    handle.applyMatrix4(mh);
+    caneParts.push(handle);
+    var cane = new THREE.Mesh(World.mergeGeometries(caneParts),
+      new THREE.MeshLambertMaterial({ color: 0x7a5a34 }));
+    armR.add(cane);
+
     var shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5),
       new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
@@ -1693,7 +2048,7 @@
     g.add(shadow);
 
     g.visible = false;
-    g.userData = { armL: armL, armR: armR, bag: bag };
+    g.userData = { armL: armL, armR: armR, bag: bag, cane: cane };
     return g;
   };
 
@@ -1873,7 +2228,10 @@
         dir: 1,
         speed: 1.4,
         walk: 0,
-        angry: 0
+        angry: 0,
+        whack: 0,          // сколько уже колотит печку
+        whackCooldown: 0,  // после нагоняя идёт дальше молча
+        knockTimer: 0
       });
     }
   }
@@ -1899,6 +2257,9 @@
     free.speed = 1.1 + Math.random() * 0.9;
     free.walk = Math.random() * 6;
     free.angry = 0;
+    free.whack = 0;
+    free.whackCooldown = 0;
+    free.knockTimer = 0;
     free.mesh.visible = true;
     return free;
   }
@@ -1951,14 +2312,34 @@
       var g = grannies[i];
       if (!g.active) continue;
 
+      var target = racerNextTo(g);          // кто подъехал в упор
+      g.walk += dt * 6;
+
       if (g.angry > 0) {
+        // только что сбили: стоит и потрясает тростью
         g.angry -= dt;
         g.mesh.userData.armR.rotation.z = -2.2 + Math.sin(g.angry * 18) * 0.5;
+      } else if (target && g.whackCooldown <= 0) {
+        // колотит печку тростью и кричит, но дорогу переходить не забывает,
+        // иначе за ней намертво встаёт весь поток
+        g.whack += dt;
+        g.mesh.userData.armR.rotation.z = -1.9 + Math.sin(g.whack * 13) * 0.85;
+        g.knockTimer -= dt;
+        if (g.knockTimer <= 0) {
+          g.knockTimer = 0.44;
+          var dcam = camera.position.distanceTo(g.mesh.position);
+          sfx.caneWhack(Math.max(0, 1 - dcam / 90), Math.random() < 0.6);
+        }
+        // от такой ругани печка теряет ход
+        target.speed = Math.max(0, target.speed - 6 * dt);
+        g.lane += g.dir * g.speed * 0.4 * dt;
+        if (g.whack > 3) { g.whack = 0; g.whackCooldown = 4; }
       } else {
+        g.whack = 0;
+        if (g.whackCooldown > 0) g.whackCooldown -= dt;
         g.mesh.userData.armR.rotation.z = Math.sin(g.walk) * 0.35;
         g.lane += g.dir * g.speed * dt;
       }
-      g.walk += dt * 6;
       g.mesh.userData.armL.rotation.z = -Math.sin(g.walk) * 0.25;
 
       var p = track.pointAt(g.dist);
@@ -1966,13 +2347,28 @@
       var t = track.tangentAt(g.dist);
       g.mesh.position.copy(p).addScaledVector(n, g.lane);
       g.mesh.position.y = Math.abs(Math.sin(g.walk)) * 0.045;
-      g.mesh.rotation.y = Math.atan2(t.x, t.z) + g.dir * Math.PI / 2;
+      var faceDir = g.dir;
+      if (target) faceDir = (target.lane > g.lane) ? 1 : -1;   // разворачивается к нарушителю
+      g.mesh.rotation.y = Math.atan2(t.x, t.z) + faceDir * Math.PI / 2;
       g.mesh.rotation.z = Math.sin(g.walk) * 0.05;
 
       // ушла с дороги или все уже проехали — убираем
       var gone = Math.abs(g.lane) > MAX_LANE + 4 && (g.lane * g.dir) > 0;
       if (gone) { g.active = false; g.mesh.visible = false; }
     }
+  }
+
+  /* Печка, которая подъехала к бабушке вплотную (но пока не сбила). */
+  function racerNextTo(g) {
+    var best = null, bestGap = 6.5;
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished) continue;
+      var along = Math.abs(track.norm(g.dist - r.dist + track.length / 2) - track.length / 2);
+      var across = Math.abs(g.lane - r.lane);
+      if (along < bestGap && across < 4.2) { bestGap = along; best = r; }
+    }
+    return best;
   }
 
   /* Сбил бабушку — снятие с гонки. */
@@ -2388,11 +2784,13 @@
     var st = ni.inter.state;
     var toStop = ni.toStop;
 
-    // бабушку объехать выходит не всегда — тогда тормозим
+    // бабушку объехать выходит не всегда — тогда тормозим,
+    // но если уже почти встали, всё-таки крадёмся мимо
     var ob = obstacleAhead(r, 26);
     if (ob && ob.obj.isGranny) {
       var needG = (r.speed * r.speed) / (2 * BRAKE) + r.speed * r.ai.reaction + 4;
-      if (ob.gap < needG && Math.abs(ob.obj.lane - r.lane) < 2.6) return false;
+      var close = Math.abs(ob.obj.lane - r.lane) < 2.6;
+      if (ob.gap < needG && close && r.speed > 3) return false;
     }
 
     // держится у стоп-линии, пока красный
@@ -2420,17 +2818,20 @@
     for (var i = 0; i < u.wheels.length; i++) u.wheels[i].rotation.x -= spin;
 
     r.bob += dt * (2 + r.speed * 0.6);
-    u.body.position.y = 1.35 + Math.sin(r.bob) * 0.035 * Math.min(1, r.speed / 8);
+    u.body.position.y = Math.sin(r.bob) * 0.04 * Math.min(1, r.speed / 8);
     var flick = 0.85 + Math.sin(r.bob * 3.3) * 0.15 + (r.throttle ? 0.35 : 0);
     if (r.boosting) flick *= 1.7;
     u.fireGlow.scale.set(3 * flick, 2.4 * flick, 1);
+    if (u.vent) u.vent.scale.set(1.7 * flick, 1.1 * flick, 1);
     u.fire.material.color.setHex(r.boosting ? 0xfff0a0 : 0xff8a24);
 
     if (!r.dq) {
-      r.smokeAcc += dt * (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0) + (r.boosting ? 14 : 0));
+      // у далёких печек дыма меньше: спрайты — самая дорогая часть кадра
+      var far = camera.position.distanceTo(r.mesh.position) > 130 ? 0.35 : 1;
+      r.smokeAcc += dt * far * (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0) + (r.boosting ? 14 : 0));
       while (r.smokeAcc > 1) {
         r.smokeAcc -= 1;
-        var pipe = new THREE.Vector3(0, 5.0, -1.15).applyEuler(r.mesh.rotation).add(r.mesh.position);
+        var pipe = new THREE.Vector3(0, 5.15, -1.05).applyEuler(r.mesh.rotation).add(r.mesh.position);
         var back = track.tangentAt(r.dist).multiplyScalar(-r.speed * 0.25);
         back.y = 2.2 + Math.random() * 1.4;
         back.x += (Math.random() - 0.5) * 1.4;
@@ -2474,17 +2875,25 @@
     var desired = new THREE.Vector3();
     var look = r.mesh.position.clone();
 
+    // Камера идёт по самой трассе позади печки: тогда на поворотах печь
+    // остаётся в центре кадра, а не уезжает к краю.
+    function behind(metres, height, laneShare) {
+      var d = r.dist - metres;
+      var pt = track.pointAt(d);
+      var side = track.sideAt(d);
+      return pt.clone().addScaledVector(side, r.lane * laneShare).add(new THREE.Vector3(0, height, 0));
+    }
+
     if (cameraMode === 0) {
-      desired.copy(r.mesh.position).addScaledVector(t, r.boosting ? -18 : -15)
-        .add(new THREE.Vector3(0, r.boosting ? 8.2 : 7.5, 0));
-      look.addScaledVector(t, 14);
-      look.y += 2.2;
+      desired.copy(behind(r.boosting ? 18.5 : 16, r.boosting ? 7.4 : 6.8, 0.85));
+      look.addScaledVector(t, 13);
+      look.y += 2.6;
     } else if (cameraMode === 1) {
-      desired.copy(r.mesh.position).addScaledVector(t, -30).add(new THREE.Vector3(0, 18, 0));
-      look.addScaledVector(t, 20);
+      desired.copy(behind(30, 15, 0.5));
+      look.addScaledVector(t, 24);
       look.y += 3;
     } else {
-      desired.copy(r.mesh.position).add(new THREE.Vector3(0, 62, 0)).addScaledVector(t, -6);
+      desired.copy(r.mesh.position).add(new THREE.Vector3(0, 70, 0)).addScaledVector(t, -7);
       look.y += 1;
     }
 
@@ -3023,7 +3432,10 @@
       trackLength: Math.round(track ? track.length : 0),
       lights: intersections ? intersections.map(function (i) { return i.state; }) : [],
       grannies: grannies.filter(function (g) { return g.active; }).map(function (g) {
-        return { dist: Math.round(g.dist), lane: +g.lane.toFixed(1), angry: g.angry > 0 };
+        return {
+          dist: Math.round(g.dist), lane: +g.lane.toFixed(1),
+          angry: g.angry > 0, whacking: g.whack > 0
+        };
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
       racers: racers.map(function (r) {
@@ -3064,6 +3476,27 @@
     });
   };
 
+  /* Отладка: где камера относительно печки в фокусе. */
+  Game.cameraInfo = function () {
+    var f = focusRacer();
+    if (!f) return null;
+    // куда печка попадает на экране: 0,0 — левый верх, 1,1 — правый низ
+    var top = f.mesh.position.clone(); top.y += 5.1;
+    var mid = f.mesh.position.clone(); mid.y += 1.5;
+    function project(v) {
+      var q = v.clone().project(camera);
+      return { x: +((q.x + 1) / 2).toFixed(2), y: +((1 - q.y) / 2).toFixed(2) };
+    }
+    return {
+      distance: +camera.position.distanceTo(f.mesh.position).toFixed(1),
+      camY: +camera.position.y.toFixed(1),
+      speed: Math.round(f.speed * 3.6),
+      mode: cameraMode,
+      screenTop: project(top),
+      screenMid: project(mid)
+    };
+  };
+
   Game.renderInfo = function () {
     return renderer ? {
       calls: renderer.info.render.calls,
@@ -3077,6 +3510,7 @@
   global.__dbg = Game.debug;
   global.__renderInfo = Game.renderInfo;
   global.__ground = Game.groundUnder;
+  global.__cam = Game.cameraInfo;
 })(window);
 
 </script>
