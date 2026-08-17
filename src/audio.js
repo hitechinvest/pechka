@@ -149,6 +149,81 @@
     this.noise(0.5, 0.12, 700);
   };
 
+  /* Удар бортом о борт. */
+  Sfx.prototype.bump = function (vol) {
+    this.init();
+    if (!this.ctx || !vol) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(60, t + 0.14);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.22 * vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.22);
+    this.noise(0.12, 0.1 * vol, 1500);
+  };
+
+  /* Наезд на бабушку: глухой удар, звон посуды из авоськи и возмущённое «ой-ой». */
+  Sfx.prototype.thud = function () {
+    this.init();
+    if (!this.ctx) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(110, t);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.25);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.34, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.4);
+    this.noise(0.3, 0.14, 2400);
+
+    // два возмущённых вскрика вверх-вниз
+    for (var i = 0; i < 2; i++) {
+      var v = this.ctx.createOscillator();
+      v.type = 'triangle';
+      var at = t + 0.18 + i * 0.24;
+      v.frequency.setValueAtTime(520 + i * 90, at);
+      v.frequency.linearRampToValueAtTime(760 + i * 90, at + 0.09);
+      v.frequency.linearRampToValueAtTime(430 + i * 60, at + 0.22);
+      var vg = this.ctx.createGain();
+      vg.gain.setValueAtTime(0.0001, at);
+      vg.gain.linearRampToValueAtTime(0.16, at + 0.04);
+      vg.gain.exponentialRampToValueAtTime(0.0001, at + 0.24);
+      v.connect(vg).connect(this.master);
+      v.start(at);
+      v.stop(at + 0.26);
+    }
+  };
+
+  /* Выхлоп пара при включении турбо. */
+  Sfx.prototype.steamBurst = function (vol) {
+    this.init();
+    if (!this.ctx || !vol || vol < 0.03) return;
+    var t = this.ctx.currentTime;
+    var out = this.ctx.createGain();
+    out.gain.value = vol;
+    out.connect(this.master);
+    this.noise(0.7, 0.2, 3200, out);
+    var o = this.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(320, t);
+    o.frequency.exponentialRampToValueAtTime(880, t + 0.35);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.12, t + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+    o.connect(g).connect(out);
+    o.start(t);
+    o.stop(t + 0.5);
+  };
+
   Sfx.prototype.beep = function (freq, dur, gain) {
     this.init();
     if (!this.ctx) return;

@@ -672,6 +672,74 @@
     return g;
   };
 
+  /* ---------- Бабушка ---------- */
+
+  var GRANNY_KERCHIEFS = [0xd83a3a, 0xf0c020, 0x3f7fd8, 0xe066b0, 0x36b56a];
+  var GRANNY_COATS = [0x4a5a72, 0x6b4a5a, 0x3f5a48, 0x6a5f42, 0x53476b];
+
+  World.buildGranny = function () {
+    var g = new THREE.Group();
+    var coatColor = GRANNY_COATS[Math.floor(Math.random() * GRANNY_COATS.length)];
+    var kerchief = GRANNY_KERCHIEFS[Math.floor(Math.random() * GRANNY_KERCHIEFS.length)];
+
+    // пальто и юбка — одной сеткой
+    var body = [];
+    var skirt = new THREE.CylinderGeometry(0.34, 0.56, 0.85, 10);
+    skirt.translate(0, 0.42, 0);
+    body.push(skirt);
+    var coat = new THREE.CylinderGeometry(0.3, 0.36, 0.62, 10);
+    coat.translate(0, 1.13, 0);
+    body.push(coat);
+    g.add(new THREE.Mesh(World.mergeGeometries(body),
+      new THREE.MeshLambertMaterial({ color: coatColor })));
+
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10),
+      new THREE.MeshLambertMaterial({ color: 0xe8c39a }));
+    head.position.y = 1.6;
+    g.add(head);
+
+    // платок
+    var scarf = new THREE.Mesh(new THREE.SphereGeometry(0.235, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.62),
+      new THREE.MeshLambertMaterial({ color: kerchief }));
+    scarf.position.y = 1.62;
+    g.add(scarf);
+    var knot = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6),
+      new THREE.MeshLambertMaterial({ color: kerchief }));
+    knot.position.set(0, 1.45, -0.16);
+    g.add(knot);
+
+    // руки: одна с авоськой, вторая может грозить кулаком
+    var skinMat = new THREE.MeshLambertMaterial({ color: 0xe8c39a });
+    var armL = new THREE.Group();
+    var armLMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.55, 6), skinMat);
+    armLMesh.position.y = -0.27;
+    armL.add(armLMesh);
+    armL.position.set(-0.32, 1.36, 0);
+    g.add(armL);
+
+    var armR = new THREE.Group();
+    var armRMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.55, 6), skinMat);
+    armRMesh.position.y = -0.27;
+    armR.add(armRMesh);
+    armR.position.set(0.32, 1.36, 0);
+    g.add(armR);
+
+    var bag = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 0.18),
+      new THREE.MeshLambertMaterial({ color: 0xb9843f }));
+    bag.position.set(-0.34, 0.88, 0.04);
+    g.add(bag);
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5),
+      new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.04;
+    g.add(shadow);
+
+    g.visible = false;
+    g.userData = { armL: armL, armR: armR, bag: bag };
+    return g;
+  };
+
   /* Пул частиц дыма для всех печек. */
   World.SmokeSystem = function (scene, max) {
     this.parts = [];
@@ -684,11 +752,11 @@
       }));
       s.visible = false;
       scene.add(s);
-      this.parts.push({ spr: s, life: 0, ttl: 1, vel: new THREE.Vector3(), size: 1, dark: false });
+      this.parts.push({ spr: s, life: 0, ttl: 1, vel: new THREE.Vector3(), size: 1 });
     }
   };
 
-  World.SmokeSystem.prototype.emit = function (pos, vel, size, dark) {
+  World.SmokeSystem.prototype.emit = function (pos, vel, size, colorHex) {
     var p = this.parts[this.idx];
     this.idx = (this.idx + 1) % this.max;
     p.spr.position.copy(pos);
@@ -697,7 +765,7 @@
     p.ttl = 1.4 + Math.random() * 1.3;
     p.size = size;
     p.spr.visible = true;
-    p.spr.material.color.setHex(dark ? 0x3a3a3a : 0xdedede);
+    p.spr.material.color.setHex(colorHex === undefined ? 0xdedede : colorHex);
   };
 
   World.SmokeSystem.prototype.update = function (dt) {

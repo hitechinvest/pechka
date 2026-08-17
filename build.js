@@ -9,17 +9,14 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 let html = read('index.html');
 
-const scripts = [
-  'vendor/three.min.js',
-  'src/audio.js',
-  'src/world.js',
-  'src/game.js'
-];
+// список скриптов берём прямо из index.html, чтобы сборка не отставала от разметки
+const tags = html.match(/<script src="[^"]+"><\/script>/g) || [];
+if (!tags.length) throw new Error('в index.html не найдено ни одного внешнего скрипта');
 
-for (const src of scripts) {
-  const tag = `<script src="${src}"></script>`;
-  if (!html.includes(tag)) throw new Error('не найден тег для ' + src);
+for (const tag of tags) {
+  const src = tag.match(/src="([^"]+)"/)[1];
   html = html.replace(tag, '<script>\n' + read(src) + '\n</script>');
+  console.log('встроен', src);
 }
 
 fs.mkdirSync(path.join(root, 'build'), { recursive: true });

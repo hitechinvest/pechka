@@ -6,23 +6,46 @@
   var ACCEL = 7.5;             // разгон, м/с^2
   var BRAKE = 11.5;            // торможение при отпущенной клавише, м/с^2
   var FIELD_SIZE = 8;          // всего печек на трассе
+  var STEER_RATE = 6.4;        // м/с поперёк дороги на полном ходу
+  var MAX_LANE = 9.6;          // до края асфальта
+  var EDGE_LANE = 8.6;         // дальше — обочина: сыпется песок и падает скорость
+  var EDGE_PENALTY = 0.8;      // множитель максимальной скорости на обочине
+  var BODY_HALF = 1.38;        // полуширина печки для контактов
+  var BOOST_SPEED = 39;        // м/с на турбо (~140 км/ч)
+  var BOOST_ACCEL = 15;        // разгон на турбо
+  var STEAM_DRAIN = 32;        // расход пара, % в секунду
+  var STEAM_REFILL = 11;       // восстановление пара, % в секунду
+  var STEAM_MIN = 18;          // ниже этого турбо не включить
 
   var COLORS = [0xff4d4d, 0x4da3ff, 0x53d769, 0xffd23f, 0xb46cff, 0xff8a3d, 0x38e0d0, 0xff6fb5];
+  /* Газ, руль и турбо для каждого игрока. Клавиши читаются по физическому
+     положению, поэтому раскладка (русская или латиница) не важна.
+     Цифра 1…7 — дублёр газа. */
   var HUMAN_KEYS = [
-    { code: 'Digit1', label: '1' }, { code: 'Digit2', label: '2' }, { code: 'Digit3', label: '3' },
-    { code: 'Digit4', label: '4' }, { code: 'Digit5', label: '5' }, { code: 'Digit6', label: '6' },
-    { code: 'Digit7', label: '7' }
+    { short: '↑', label: '↑ · ← → · Z (турбо)', throttle: ['ArrowUp', 'Space', 'Digit1'], left: ['ArrowLeft'], right: ['ArrowRight'], boost: ['KeyZ'] },
+    { short: 'W', label: 'W · Q E', throttle: ['KeyW', 'Digit2'], left: ['KeyQ'], right: ['KeyE'], boost: [] },
+    { short: 'I', label: 'I · J L', throttle: ['KeyI', 'Digit3'], left: ['KeyJ'], right: ['KeyL'], boost: [] },
+    { short: 'T', label: 'T · F H', throttle: ['KeyT', 'Digit4'], left: ['KeyF'], right: ['KeyH'], boost: [] },
+    { short: '8', label: 'Num 8 · 4 6', throttle: ['Numpad8', 'Digit5'], left: ['Numpad4'], right: ['Numpad6'], boost: [] },
+    { short: 'N', label: 'N · B M', throttle: ['KeyN', 'Digit6'], left: ['KeyB'], right: ['KeyM'], boost: [] },
+    { short: 'P', label: 'P · O [', throttle: ['KeyP', 'Digit7'], left: ['KeyO'], right: ['BracketLeft'], boost: [] }
   ];
+
   var AI_NAMES = ['Кузьмич', 'Матрёна', 'Валера', 'Зульфия', 'Дядя Гриша', 'Печкин', 'Байрам', 'Тётя Зина'];
 
   var Game = {};
   var renderer, scene, camera, clock;
   var track, intersections, smoke;
   var racers = [];
+  var grannies = [];
+  var granniesTimer = 0;
   var sfx = new Sfx();
+  var music = new Music(sfx);
   var engineNode = null;
   var keys = {};
   var touchThrottle = {};
+  var touchSteer = {};
+  var touchBoost = {};
   var state = 'menu';          // menu | countdown | race | over
   var countdown = 0;
   var totalLaps = 2;
@@ -31,6 +54,16 @@
   var finishOrder = [];
   var overTimer = 0;
   var elapsed = 0;
+  var lastHumans = 1;
+  var fps = 60;
+  var admin = {
+    open: false,
+    invincible: false,
+    infiniteSteam: false,
+    weakAI: false,
+    noGrannies: false,
+    lights: 'auto'
+  };
   var camPos = new THREE.Vector3();
   var camLook = new THREE.Vector3();
   var ui = {};
@@ -74,6 +107,144 @@
     intersections.forEach(function (i) { World.applyLightState(i); });
     addStartLine();
     smoke = new World.SmokeSystem(scene, 300);
+    createGrannies();
+  }
+
+  /* ---------------- Бабушки на дороге ---------------- */
+
+  function createGrannies() {
+    for (var i = 0; i < 7; i++) {
+      var mesh = World.buildGranny();
+      scene.add(mesh);
+      grannies.push({
+        isGranny: true,
+        mesh: mesh,
+        active: false,
+        dist: 0,
+        lane: 0,
+        dir: 1,
+        speed: 1.4,
+        walk: 0,
+        angry: 0
+      });
+    }
+  }
+
+  function resetGrannies() {
+    granniesTimer = 3;
+    for (var i = 0; i < grannies.length; i++) {
+      grannies[i].active = false;
+      grannies[i].mesh.visible = false;
+    }
+  }
+
+  /* Бабушки идут по зебре, когда для печек красный, и просто «где удобно». */
+  /* Поставить бабушку в конкретное место трассы (нужно и админке). */
+  function spawnGrannyAt(dist) {
+    var free = null;
+    for (var i = 0; i < grannies.length; i++) if (!grannies[i].active) { free = grannies[i]; break; }
+    if (!free) return null;
+    free.active = true;
+    free.dist = track.norm(dist);
+    free.dir = Math.random() < 0.5 ? 1 : -1;
+    free.lane = -free.dir * (MAX_LANE + 3.5);
+    free.speed = 1.1 + Math.random() * 0.9;
+    free.walk = Math.random() * 6;
+    free.angry = 0;
+    free.mesh.visible = true;
+    return free;
+  }
+
+  function spawnGranny() {
+    var free = null;
+    for (var i = 0; i < grannies.length; i++) if (!grannies[i].active) { free = grannies[i]; break; }
+    if (!free) return;
+
+    // впереди лидера, чтобы встреча точно состоялась
+    var lead = -Infinity;
+    for (var k = 0; k < racers.length; k++) {
+      var r = racers[k];
+      if (!r.dq && !r.finished && r.dist > lead) lead = r.dist;
+    }
+    if (lead === -Infinity) return;
+
+    var onZebra = Math.random() < 0.65;
+    var where;
+    if (onZebra) {
+      // ближайшая зебра, до которой ещё не доехали
+      var best = null, bestGap = Infinity;
+      for (var j = 0; j < intersections.length; j++) {
+        var gap = track.norm(intersections[j].dist - lead);
+        if (gap > 70 && gap < bestGap) { bestGap = gap; best = intersections[j]; }
+      }
+      if (!best) return;
+      where = best.dist - (track.width / 2 + 3.6) * (Math.random() < 0.5 ? 1 : -1);
+    } else {
+      where = lead + 110 + Math.random() * 90;
+    }
+
+    spawnGrannyAt(where);
+  }
+
+  function updateGrannies(dt) {
+    if (admin.noGrannies) {
+      for (var n = 0; n < grannies.length; n++) {
+        if (grannies[n].active) { grannies[n].active = false; grannies[n].mesh.visible = false; }
+      }
+      return;
+    }
+    granniesTimer -= dt;
+    if (granniesTimer <= 0) {
+      granniesTimer = 4 + Math.random() * 6;
+      spawnGranny();
+    }
+
+    for (var i = 0; i < grannies.length; i++) {
+      var g = grannies[i];
+      if (!g.active) continue;
+
+      if (g.angry > 0) {
+        g.angry -= dt;
+        g.mesh.userData.armR.rotation.z = -2.2 + Math.sin(g.angry * 18) * 0.5;
+      } else {
+        g.mesh.userData.armR.rotation.z = Math.sin(g.walk) * 0.35;
+        g.lane += g.dir * g.speed * dt;
+      }
+      g.walk += dt * 6;
+      g.mesh.userData.armL.rotation.z = -Math.sin(g.walk) * 0.25;
+
+      var p = track.pointAt(g.dist);
+      var n = track.sideAt(g.dist);
+      var t = track.tangentAt(g.dist);
+      g.mesh.position.copy(p).addScaledVector(n, g.lane);
+      g.mesh.position.y = Math.abs(Math.sin(g.walk)) * 0.045;
+      g.mesh.rotation.y = Math.atan2(t.x, t.z) + g.dir * Math.PI / 2;
+      g.mesh.rotation.z = Math.sin(g.walk) * 0.05;
+
+      // ушла с дороги или все уже проехали — убираем
+      var gone = Math.abs(g.lane) > MAX_LANE + 4 && (g.lane * g.dir) > 0;
+      if (gone) { g.active = false; g.mesh.visible = false; }
+    }
+  }
+
+  /* Сбил бабушку — снятие с гонки. */
+  function checkGrannyHits() {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished || r.speed < 0.5) continue;
+      for (var k = 0; k < grannies.length; k++) {
+        var g = grannies[k];
+        if (!g.active) continue;
+        if (Math.abs(track.norm(g.dist - r.dist + track.length / 2) - track.length / 2) > 2.6) continue;
+        if (Math.abs(g.lane - r.lane) > BODY_HALF + 0.6) continue;
+
+        g.angry = 2.6;
+        g.mesh.userData.bag.position.y = 0.3;
+        disqualify(r, 'сбил бабушку');
+        sfx.thud();
+        break;
+      }
+    }
   }
 
   function addStartLine() {
@@ -136,7 +307,7 @@
       var isHuman = i < humanCount;
       var name = isHuman ? ('Игрок ' + (i + 1)) : shuffledAi[i - humanCount];
       var color = COLORS[i % COLORS.length];
-      var labelText = isHuman ? (name + ' [' + HUMAN_KEYS[i].label + ']') : null;
+      var labelText = isHuman ? (name + ' [' + HUMAN_KEYS[i].short + ']') : null;
       var mesh = World.buildStove(color, labelText);
       scene.add(mesh);
 
@@ -147,10 +318,16 @@
         name: name,
         color: color,
         isHuman: isHuman,
-        key: isHuman ? HUMAN_KEYS[i].code : null,
+        keys: isHuman ? HUMAN_KEYS[i] : null,
         keyLabel: isHuman ? HUMAN_KEYS[i].label : null,
+        canBoost: isHuman && i === 0,      // супер-пар только у первого игрока
         mesh: mesh,
         lane: (col === 0 ? -1 : 1) * (2.6 + row * 1.75),
+        steer: 0,
+        boosting: false,
+        steam: 100,
+        bumpCooldown: 0,
+        dustAcc: 0,
         dist: -8 - row * 9,
         prevDist: -8 - row * 9,
         speed: 0,
@@ -168,7 +345,8 @@
           skill: 0.87 + Math.random() * 0.13
         }
       };
-      r.lane = Math.max(-8, Math.min(8, r.lane));
+      r.lane = Math.max(-EDGE_LANE, Math.min(EDGE_LANE, r.lane));
+      r.homeLane = r.lane;
       placeRacer(r);
       racers.push(r);
     }
@@ -181,12 +359,24 @@
     var n = track.sideAt(r.dist);
     r.mesh.position.copy(p).addScaledVector(n, r.lane);
     r.mesh.position.y = 0;
-    r.mesh.rotation.y = Math.atan2(t.x, t.z);
+    // печка смотрит туда, куда едет: доворот от руля плюс крен корпуса
+    var drift = Math.atan2(r.steer * STEER_RATE * 0.6, Math.max(r.speed, 6));
+    r.mesh.rotation.y = Math.atan2(t.x, t.z) - drift;
+    r.mesh.rotation.z = -r.steer * 0.045 * Math.min(1, r.speed / 12);
   }
 
   /* ---------------- Светофоры ---------------- */
 
   function updateLights(dt) {
+    if (admin.lights !== 'auto') {
+      for (var f = 0; f < intersections.length; f++) {
+        if (intersections[f].state !== admin.lights) {
+          intersections[f].state = admin.lights;
+          World.applyLightState(intersections[f]);
+        }
+      }
+      return;
+    }
     for (var i = 0; i < intersections.length; i++) {
       var it = intersections[i];
       it.timer -= dt;
@@ -206,7 +396,10 @@
         var vol = Math.max(0, 1 - d / 420);
         var f = focusRacer();
         if (f && nextIntersection(f).inter === it) vol = Math.max(vol, 0.85);
-        if (state === 'race' && vol > 0.05) sfx.trainWhistle(vol * 0.9);
+        if (state === 'race' && vol > 0.05) {
+          sfx.trainWhistle(vol * 0.9);
+          if (vol > 0.5) music.duck(1.3);
+        }
       }
       World.applyLightState(it);
     }
@@ -240,42 +433,137 @@
     return b > a;
   }
 
-  function disqualify(r) {
+  function disqualify(r, reason) {
     if (r.dq || r.finished) return;
+    if (admin.invincible && r.isHuman) {
+      flash(r.name + ': ' + (reason || 'нарушение') + ' — прощено (админ)', '#5dd6ff');
+      return;
+    }
     r.dq = true;
+    r.dqReason = reason || 'проехал на красный';
     r.place = 0;
     r.speed = 0;
     r.throttle = false;
+    r.steer = 0;
     r.mesh.userData.stripe.material.color.setHex(0x555555);
     r.mesh.userData.fire.visible = false;
     r.mesh.userData.fireGlow.visible = false;
     for (var i = 0; i < 16; i++) {
       var p = r.mesh.position.clone();
       p.y = 3 + Math.random() * 2;
-      smoke.emit(p, new THREE.Vector3((Math.random() - 0.5) * 6, 2 + Math.random() * 4, (Math.random() - 0.5) * 6), 3, true);
+      smoke.emit(p, new THREE.Vector3((Math.random() - 0.5) * 6, 2 + Math.random() * 4,
+        (Math.random() - 0.5) * 6), 3, 0x3a3a3a);
     }
     sfx.buzzer();
-    flash('ДИСКВАЛИФИКАЦИЯ: ' + r.name + ' проехал на красный!', '#ff4d4d');
+    music.duck(1.1);
+    flash('ДИСКВАЛИФИКАЦИЯ: ' + r.name + ' ' + r.dqReason + '!', '#ff4d4d');
+  }
+
+  /* Печки задевают друг друга бортами: расталкиваем и немного гасим скорость. */
+  function resolveContacts() {
+    var minGap = BODY_HALF * 2;
+    for (var i = 0; i < racers.length; i++) {
+      for (var j = i + 1; j < racers.length; j++) {
+        var a = racers[i], b = racers[j];
+        if (a.dq && b.dq) continue;
+        if (Math.abs(a.dist - b.dist) > 4.3) continue;
+        var dl = a.lane - b.lane;
+        var over = minGap - Math.abs(dl);
+        if (over <= 0) continue;
+
+        var sign = dl >= 0 ? 1 : -1;
+        var aFixed = a.dq || a.finished, bFixed = b.dq || b.finished;
+        if (!aFixed && !bFixed) {
+          a.lane += sign * over / 2;
+          b.lane -= sign * over / 2;
+        } else if (!aFixed) {
+          a.lane += sign * over;
+        } else if (!bFixed) {
+          b.lane -= sign * over;
+        }
+        a.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, a.lane));
+        b.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, b.lane));
+
+        if (!aFixed) a.speed *= 0.985;
+        if (!bFixed) b.speed *= 0.985;
+        var loud = Math.max(a.speed, b.speed);
+        if (a.bumpCooldown <= 0 && b.bumpCooldown <= 0 && loud > 6) {
+          a.bumpCooldown = b.bumpCooldown = 0.45;
+          var d = camera.position.distanceTo(a.mesh.position);
+          sfx.bump(Math.max(0, 1 - d / 120) * Math.min(1, loud / 20));
+        }
+      }
+    }
   }
 
   /* ---------------- Обновление гонки ---------------- */
 
+  function pressed(codes) {
+    for (var i = 0; i < codes.length; i++) if (keys[codes[i]]) return true;
+    return false;
+  }
+
   function updateRacer(r, dt) {
     if (r.dq) return;
+    if (r.bumpCooldown > 0) r.bumpCooldown -= dt;
+
     if (r.finished) {
       // докатывается и останавливается
       r.throttle = false;
+      r.steer = 0;
       r.speed = Math.max(0, r.speed - BRAKE * 0.5 * dt);
     } else {
+      var wantBoost;
       if (r.isHuman) {
-        r.throttle = !!(keys[r.key] || touchThrottle[r.id] ||
-          (r.id === 0 && (keys['Space'] || keys['ArrowUp'])));
+        r.throttle = pressed(r.keys.throttle) || !!touchThrottle[r.id];
+        var left = pressed(r.keys.left) || touchSteer[r.id] === -1;
+        var right = pressed(r.keys.right) || touchSteer[r.id] === 1;
+        r.steer = (right ? 1 : 0) - (left ? 1 : 0);
+        wantBoost = r.canBoost && (pressed(r.keys.boost) || !!touchBoost[r.id]);
       } else {
         r.throttle = aiThrottle(r);
+        r.steer = aiSteer(r);
+        wantBoost = false;               // компьютер турбо не получает
       }
-      var maxV = MAX_SPEED * (r.isHuman ? 1 : r.ai.skill);
-      if (r.throttle) r.speed = Math.min(maxV, r.speed + ACCEL * dt);
+
+      // супер-пар: пока держат кнопку и есть пар в котле
+      var wasBoosting = r.boosting;
+      r.boosting = wantBoost && r.throttle && r.steam > (r.boosting ? 0.5 : STEAM_MIN);
+      if (r.boosting) {
+        r.steam = Math.max(0, r.steam - STEAM_DRAIN * dt);
+        if (!wasBoosting) {
+          var dcam = camera.position.distanceTo(r.mesh.position);
+          sfx.steamBurst(Math.max(0, 1 - dcam / 140));
+        }
+      } else {
+        r.steam = Math.min(100, r.steam + STEAM_REFILL * dt);
+      }
+      if (admin.infiniteSteam && r.canBoost) r.steam = 100;
+
+      var onEdge = Math.abs(r.lane) > EDGE_LANE;
+      var skill = r.isHuman ? 1 : r.ai.skill * (admin.weakAI ? 0.75 : 1);
+      var maxV = (r.boosting ? BOOST_SPEED : MAX_SPEED) * skill * (onEdge ? EDGE_PENALTY : 1);
+      var accel = r.boosting ? BOOST_ACCEL : ACCEL;
+      if (r.throttle) r.speed = Math.min(maxV, r.speed + accel * dt);
       else r.speed = Math.max(0, r.speed - BRAKE * dt);
+      if (r.speed > maxV) r.speed = Math.max(maxV, r.speed - BRAKE * 0.8 * dt);
+
+      // руль: на малой скорости печка почти не слушается
+      r.lane += r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9);
+      r.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, r.lane));
+
+      if (onEdge && r.speed > 3) {
+        r.dustAcc += dt * (1 + r.speed * 0.25);
+        while (r.dustAcc > 1) {
+          r.dustAcc -= 1;
+          // пыль летит из-под задних колёс, чтобы не закрывать дорогу перед камерой
+          var back = track.tangentAt(r.dist).multiplyScalar(-2.2);
+          var dp = r.mesh.position.clone().add(back);
+          dp.y = 0.35;
+          smoke.emit(dp, new THREE.Vector3(back.x * 0.4, 0.7 + Math.random() * 0.6, back.z * 0.4),
+            0.9, 0xdcc08a);
+        }
+      }
     }
 
     r.prevDist = r.dist;
@@ -285,7 +573,7 @@
     for (var i = 0; i < intersections.length; i++) {
       var it = intersections[i];
       if (crossedIntersection(r, it) && it.state === 'red') {
-        disqualify(r);
+        disqualify(r, 'проехал на красный');
         r.dist = r.prevDist;
         break;
       }
@@ -302,6 +590,7 @@
         finishOrder.push(r);
         if (finishOrder.length === 1) {
           sfx.fanfare();
+          music.duck(2.4);
           flash('🏁 ' + r.name + ' финишировал первым!', '#ffd23f');
         } else if (r.isHuman) {
           flash('🏁 ' + r.name + ' на финише, место ' + finishOrder.length, '#8ce99a');
@@ -313,10 +602,50 @@
     animateStove(r, dt);
   }
 
+  /* Кто мешает ехать прямо: печка впереди или бабушка на дороге. */
+  function obstacleAhead(r, range) {
+    var best = null, bestGap = range;
+    for (var i = 0; i < racers.length; i++) {
+      var o = racers[i];
+      if (o === r || o.dq) continue;
+      var gap = o.dist - r.dist;
+      if (gap > 0.5 && gap < bestGap && Math.abs(o.lane - r.lane) < 3.4) { bestGap = gap; best = o; }
+    }
+    for (var k = 0; k < grannies.length; k++) {
+      var g = grannies[k];
+      if (!g.active) continue;
+      var gg = track.norm(g.dist - r.dist);
+      if (gg < bestGap && Math.abs(g.lane - r.lane) < 3.2) { bestGap = gg; best = g; }
+    }
+    return best ? { obj: best, gap: bestGap } : null;
+  }
+
+  function aiSteer(r) {
+    var target = r.homeLane;
+    var ob = obstacleAhead(r, 30);
+    if (ob) {
+      // объезжаем с той стороны, где больше места до края
+      var dir = ob.obj.lane <= 0 ? 1 : -1;
+      target = ob.obj.lane + dir * 3.8;
+      if (Math.abs(target) > EDGE_LANE) target = ob.obj.lane - dir * 3.8;
+      target = Math.max(-EDGE_LANE, Math.min(EDGE_LANE, target));
+    }
+    var diff = target - r.lane;
+    if (Math.abs(diff) < 0.25) return 0;
+    return Math.max(-1, Math.min(1, diff / 2.2)) * 0.85;
+  }
+
   function aiThrottle(r) {
     var ni = nextIntersection(r);
     var st = ni.inter.state;
     var toStop = ni.toStop;
+
+    // бабушку объехать выходит не всегда — тогда тормозим
+    var ob = obstacleAhead(r, 26);
+    if (ob && ob.obj.isGranny) {
+      var needG = (r.speed * r.speed) / (2 * BRAKE) + r.speed * r.ai.reaction + 4;
+      if (ob.gap < needG && Math.abs(ob.obj.lane - r.lane) < 2.6) return false;
+    }
 
     // держится у стоп-линии, пока красный
     if (st === 'red' && toStop < 2.5 && toStop > -3 && r.speed < 4) {
@@ -345,10 +674,12 @@
     r.bob += dt * (2 + r.speed * 0.6);
     u.body.position.y = 1.35 + Math.sin(r.bob) * 0.035 * Math.min(1, r.speed / 8);
     var flick = 0.85 + Math.sin(r.bob * 3.3) * 0.15 + (r.throttle ? 0.35 : 0);
+    if (r.boosting) flick *= 1.7;
     u.fireGlow.scale.set(3 * flick, 2.4 * flick, 1);
+    u.fire.material.color.setHex(r.boosting ? 0xfff0a0 : 0xff8a24);
 
     if (!r.dq) {
-      r.smokeAcc += dt * (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0));
+      r.smokeAcc += dt * (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0) + (r.boosting ? 14 : 0));
       while (r.smokeAcc > 1) {
         r.smokeAcc -= 1;
         var pipe = new THREE.Vector3(0, 5.0, -1.15).applyEuler(r.mesh.rotation).add(r.mesh.position);
@@ -356,7 +687,7 @@
         back.y = 2.2 + Math.random() * 1.4;
         back.x += (Math.random() - 0.5) * 1.4;
         back.z += (Math.random() - 0.5) * 1.4;
-        smoke.emit(pipe, back, 1.6 + Math.random(), false);
+        smoke.emit(pipe, back, (r.boosting ? 2.4 : 1.6) + Math.random());
       }
     }
   }
@@ -396,7 +727,8 @@
     var look = r.mesh.position.clone();
 
     if (cameraMode === 0) {
-      desired.copy(r.mesh.position).addScaledVector(t, -15).add(new THREE.Vector3(0, 7.5, 0));
+      desired.copy(r.mesh.position).addScaledVector(t, r.boosting ? -18 : -15)
+        .add(new THREE.Vector3(0, r.boosting ? 8.2 : 7.5, 0));
       look.addScaledVector(t, 14);
       look.y += 2.2;
     } else if (cameraMode === 1) {
@@ -408,9 +740,11 @@
       look.y += 1;
     }
 
-    var k = 1 - Math.pow(0.0016, dt);
+    // чем быстрее печка, тем жёстче камера её держит
+    var vv = Math.min(1, r.speed / BOOST_SPEED);
+    var k = 1 - Math.exp(-(6 + vv * 14) * dt);
     camPos.lerp(desired, k);
-    camLook.lerp(look, Math.min(1, k * 1.6));
+    camLook.lerp(look, Math.min(1, k * 1.5));
     camera.position.copy(camPos);
 
     // на скорости шире угол и небольшая тряска — печка всё-таки не гоночный болид
@@ -476,21 +810,50 @@
     var danger = st === 'red' && ni.toStop < (f.speed * f.speed) / (2 * BRAKE) + 6 && f.speed > 2;
     ui.lightBox.className = 'light-box' + (danger ? ' danger' : '');
 
-    // индикаторы газа игроков
+    // котёл показываем только у того, кому доступно турбо
+    ui.steamBox.style.display = f.canBoost ? '' : 'none';
+    if (f.canBoost) {
+      ui.steamFill.style.width = Math.round(f.steam) + '%';
+      ui.steamBox.classList.toggle('boosting', !!f.boosting);
+      ui.steamBox.classList.toggle('empty', f.steam < STEAM_MIN && !f.boosting);
+    }
+
+    // бабушка на дороге впереди
+    var granny = grannyAhead(f, 110);
+    ui.granny.style.opacity = granny ? '1' : '0';
+    if (granny) ui.grannyDist.textContent = Math.round(granny.gap) + ' м';
+
+    // состояние каждого игрока
     for (var h = 0; h < ui.pedals.length; h++) {
       var pr = racers[h];
       if (!pr) continue;
-      ui.pedals[h].classList.toggle('on', !!pr.throttle && !pr.dq && !pr.finished);
-      ui.pedals[h].classList.toggle('out', pr.dq);
-      ui.pedals[h].querySelector('.pspeed').textContent = pr.dq ? 'снят' :
+      var el = ui.pedals[h];
+      el.classList.toggle('on', !!pr.throttle && !pr.dq && !pr.finished);
+      el.classList.toggle('boost', !!pr.boosting);
+      el.classList.toggle('out', pr.dq);
+      var bar = el.querySelector('.steam i');
+      if (bar) bar.style.width = Math.round(pr.steam) + '%';
+      el.querySelector('.pspeed').textContent = pr.dq ? 'снят' :
         (pr.finished ? 'финиш' : Math.round(pr.speed * 3.6) + ' км/ч');
     }
+  }
+
+  function grannyAhead(r, range) {
+    var best = null;
+    for (var i = 0; i < grannies.length; i++) {
+      var g = grannies[i];
+      if (!g.active || Math.abs(g.lane) > MAX_LANE + 1.5) continue;
+      var gap = track.norm(g.dist - r.dist);
+      if (gap < range && (!best || gap < best.gap)) best = { granny: g, gap: gap };
+    }
+    return best;
   }
 
   function showResults() {
     state = 'over';
     sfx.stopEngines();
     engineNode = null;
+    music.setIntensity(1);
     var order = ranking();
     var humans = racers.filter(function (r) { return r.isHuman; });
     var allHumansOut = humans.every(function (r) { return r.dq; });
@@ -506,8 +869,8 @@
     html += '</ol>';
     var dqd = racers.filter(function (r) { return r.dq; });
     if (dqd.length) {
-      html += '<p class="dqlist">Дисквалифицированы за красный: ' +
-        dqd.map(function (r) { return r.name; }).join(', ') + '</p>';
+      html += '<p class="dqlist">Сняты с гонки: ' +
+        dqd.map(function (r) { return r.name + ' (' + r.dqReason + ')'; }).join(', ') + '</p>';
     }
     ui.resultBody.innerHTML = html;
     ui.results.classList.add('show');
@@ -519,6 +882,8 @@
     requestAnimationFrame(loop);
     var dt = Math.min(clock.getDelta(), 0.05);
     if (!scene) return;
+    if (dt > 0) fps += (1 / dt - fps) * 0.06;
+    if (admin.open) updateAdminStats();
 
     if (state === 'countdown') {
       var before = Math.ceil(countdown);
@@ -538,7 +903,13 @@
     } else if (state === 'race') {
       elapsed += dt;
       updateLights(dt);
+      updateGrannies(dt);
       for (var i = 0; i < racers.length; i++) updateRacer(racers[i], dt);
+      resolveContacts();
+      checkGrannyHits();
+      for (var pi = 0; pi < racers.length; pi++) {
+        if (!racers[pi].dq) placeRacer(racers[pi]);
+      }
 
       var humansDone = racers.filter(function (r) { return r.isHuman; })
         .every(function (r) { return r.dq || r.finished; });
@@ -557,6 +928,9 @@
     if (state === 'menu') updateMenuCamera(dt);
     else updateCamera(dt, f);
 
+    if (state === 'race' && f) {
+      music.setIntensity(f.lap >= totalLaps ? 3 : 2);
+    }
     if (state !== 'menu') {
       updateHud();
       if (engineNode && f) sfx.updateEngine(engineNode, f.speed, f.throttle);
@@ -577,17 +951,35 @@
   /* ---------------- Ввод ---------------- */
 
   function bindInput() {
+    var swallow = /^(Space|Arrow|Digit|Numpad|Bracket|Comma|Key[ZSKGMPONBTIWQEFHLJ])/;
     global.addEventListener('keydown', function (e) {
       keys[e.code] = true;
-      if (e.code === 'Space' || e.code.indexOf('Digit') === 0 || e.code === 'ArrowUp') e.preventDefault();
-      if (e.code === 'KeyC' && state !== 'menu') cycleFocus();
-      if (e.code === 'KeyV' && state !== 'menu') cameraMode = (cameraMode + 1) % 3;
-      if (e.code === 'KeyM') { sfx.setMuted(!sfx.muted); ui.mute.textContent = sfx.muted ? '🔇' : '🔊'; }
+      if (swallow.test(e.code)) e.preventDefault();
+      if (state !== 'menu') {
+        if (e.code === 'KeyC') cycleFocus();
+        if (e.code === 'KeyV') cameraMode = (cameraMode + 1) % 3;
+      }
+      if (e.code === 'KeyX') toggleSound();
+      if (e.code === 'KeyY') toggleMusic();
+      if (e.code === 'KeyA') toggleAdmin();
       if (e.code === 'KeyR' && state === 'over') backToMenu();
       sfx.resume();
+      music.start();
     });
     global.addEventListener('keyup', function (e) { keys[e.code] = false; });
     global.addEventListener('blur', function () { keys = {}; });
+  }
+
+  function toggleSound() {
+    sfx.init();
+    sfx.setMuted(!sfx.muted);
+    ui.mute.textContent = sfx.muted ? '🔇' : '🔊';
+    ui.mute.classList.toggle('off', sfx.muted);
+  }
+
+  function toggleMusic() {
+    music.setEnabled(!music.enabled);
+    ui.musicBtn.classList.toggle('off', !music.enabled);
   }
 
   function cycleFocus() {
@@ -605,32 +997,66 @@
     ui.pedalBar.innerHTML = '';
     ui.pedals = [];
     for (var i = 0; i < humanCount; i++) {
+      var color = '#' + new THREE.Color(COLORS[i]).getHexString();
       var el = document.createElement('div');
       el.className = 'pedal';
-      el.style.borderColor = '#' + new THREE.Color(COLORS[i]).getHexString();
-      el.innerHTML = '<b>Игрок ' + (i + 1) + '</b>' +
-        '<span class="pkey">' + HUMAN_KEYS[i].label + '</span>' +
-        '<span class="pspeed">0 км/ч</span>';
+      el.style.borderColor = color;
+      var turbo = (i === 0)
+        ? '<button class="pbtn turbo" data-act="boost">ТУРБО Z</button><div class="steam"><i></i></div>'
+        : '';
+      el.innerHTML =
+        '<div class="prow">' +
+          '<button class="pbtn steer" data-act="left">◀</button>' +
+          '<button class="pbtn gas" data-act="gas">' + HUMAN_KEYS[i].short + '</button>' +
+          '<button class="pbtn steer" data-act="right">▶</button>' +
+        '</div>' + turbo +
+        '<span class="pspeed">Игрок ' + (i + 1) + '</span>';
       ui.pedalBar.appendChild(el);
       ui.pedals.push(el);
+      bindPedal(el, i);
+    }
+  }
 
-      (function (idx, node) {
-        function down(ev) { ev.preventDefault(); touchThrottle[idx] = true; node.classList.add('on'); sfx.resume(); }
-        function up(ev) { ev.preventDefault(); touchThrottle[idx] = false; node.classList.remove('on'); }
+  /* Кнопки работают и мышью, и пальцем; отпускание ловим где угодно. */
+  function bindPedal(el, idx) {
+    var btns = el.querySelectorAll('.pbtn');
+    for (var b = 0; b < btns.length; b++) {
+      (function (node, act) {
+        function down(ev) {
+          ev.preventDefault();
+          if (act === 'gas') touchThrottle[idx] = true;
+          else if (act === 'boost') touchBoost[idx] = true;
+          else touchSteer[idx] = act === 'left' ? -1 : 1;
+          node.classList.add('held');
+          sfx.resume();
+          music.start();
+        }
+        function up(ev) {
+          if (ev) ev.preventDefault();
+          if (act === 'gas') touchThrottle[idx] = false;
+          else if (act === 'boost') touchBoost[idx] = false;
+          else if (touchSteer[idx] === (act === 'left' ? -1 : 1)) touchSteer[idx] = 0;
+          node.classList.remove('held');
+        }
         node.addEventListener('pointerdown', down);
         node.addEventListener('pointerup', up);
         node.addEventListener('pointercancel', up);
         node.addEventListener('pointerleave', up);
-      })(i, el);
+        node.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+      })(btns[b], btns[b].dataset.act);
     }
   }
 
   function startRace(humanCount, laps) {
     totalLaps = laps;
+    lastHumans = humanCount;
     createRacers(humanCount);
     randomizeLights();
+    resetGrannies();
     buildPedals(humanCount);
     touchThrottle = {};
+    touchSteer = {};
+    touchBoost = {};
     keys = {};
     elapsed = 0;
     overTimer = 0;
@@ -652,17 +1078,107 @@
     sfx.resume();
     sfx.stopEngines();
     engineNode = sfx.startEngine();
+    music.start();
+    music.setIntensity(2);
   }
 
   function backToMenu() {
     state = 'menu';
     sfx.stopEngines();
     engineNode = null;
+    music.setIntensity(1);
     racers.forEach(function (r) { scene.remove(r.mesh); });
     racers = [];
     ui.results.classList.remove('show');
     ui.hud.classList.remove('show');
     ui.menu.classList.add('show');
+  }
+
+  /* ---------------- Админ-панель ---------------- */
+
+  function toggleAdmin() {
+    admin.open = !admin.open;
+    ui.admin.classList.toggle('show', admin.open);
+    ui.adminBtn.classList.toggle('off', !admin.open);
+  }
+
+  function updateAdminStats() {
+    var live = 0, out = 0, gr = 0;
+    for (var i = 0; i < racers.length; i++) {
+      if (racers[i].dq) out++; else live++;
+    }
+    for (var k = 0; k < grannies.length; k++) if (grannies[k].active) gr++;
+    var info = Game.renderInfo();
+    ui.adminStats.innerHTML =
+      'кадров/с: ' + fps.toFixed(0) + ' · draw call: ' + (info ? info.calls : 0) + '<br>' +
+      'в гонке: ' + live + ' · снято: ' + out + ' · бабушек: ' + gr + '<br>' +
+      'время: ' + elapsed.toFixed(1) + ' с · круг ' +
+      (racers.length ? Math.min(focusRacer().lap, totalLaps) : 1) + '/' + totalLaps;
+  }
+
+  function killBot() {
+    var f = focusRacer();
+    var victim = null, bestGap = Infinity;
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.isHuman || r.dq || r.finished) continue;
+      var gap = f ? track.norm(r.dist - f.dist) : i;
+      if (gap < bestGap) { bestGap = gap; victim = r; }
+    }
+    if (!victim) { flash('Компьютерных соперников в гонке не осталось', '#5dd6ff'); return; }
+    disqualify(victim, 'снят администратором');
+  }
+
+  function bindAdmin() {
+    ui.admin = document.getElementById('admin');
+    ui.adminBtn = document.getElementById('admin-btn');
+    ui.adminStats = document.getElementById('adm-stats');
+    ui.adminBtn.addEventListener('click', toggleAdmin);
+
+    var checks = [
+      ['adm-invincible', 'invincible'],
+      ['adm-steam', 'infiniteSteam'],
+      ['adm-slowai', 'weakAI'],
+      ['adm-nogranny', 'noGrannies']
+    ];
+    checks.forEach(function (pair) {
+      document.getElementById(pair[0]).addEventListener('change', function (e) {
+        admin[pair[1]] = e.target.checked;
+      });
+    });
+
+    var lightBtns = document.querySelectorAll('#adm-lights button');
+    lightBtns.forEach(function (b) {
+      b.addEventListener('click', function () {
+        admin.lights = b.dataset.mode;
+        lightBtns.forEach(function (x) { x.classList.toggle('sel', x === b); });
+        if (admin.lights === 'auto') randomizeLights();
+      });
+    });
+
+    document.getElementById('adm-jump').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f || f.dq) return;
+      f.prevDist = f.dist = f.dist + 200;
+      placeRacer(f);
+      flash(f.name + ' перемещён на 200 м вперёд', '#5dd6ff');
+    });
+    document.getElementById('adm-fill').addEventListener('click', function () {
+      for (var i = 0; i < racers.length; i++) if (racers[i].canBoost) racers[i].steam = 100;
+      flash('Котлы полны', '#5dd6ff');
+    });
+    document.getElementById('adm-granny').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f) return;
+      spawnGrannyAt(f.dist + 70);
+    });
+    document.getElementById('adm-kill').addEventListener('click', killBot);
+    document.getElementById('adm-restart').addEventListener('click', function () {
+      startRace(lastHumans, totalLaps);
+    });
+    document.getElementById('adm-finish').addEventListener('click', function () {
+      if (state === 'race' || state === 'countdown') showResults();
+    });
   }
 
   /* ---------------- Точка входа ---------------- */
@@ -684,11 +1200,17 @@
     ui.resultBody = document.getElementById('result-body');
     ui.pedalBar = document.getElementById('pedals');
     ui.mute = document.getElementById('mute');
+    ui.musicBtn = document.getElementById('music');
+    ui.steamBox = document.getElementById('steam-box');
+    ui.steamFill = document.getElementById('steam-fill');
+    ui.granny = document.getElementById('granny-warn');
+    ui.grannyDist = document.getElementById('granny-dist');
     ui.pedals = [];
 
     initRenderer();
     buildWorld();
     bindInput();
+    bindAdmin();
     loop();
 
     // выбор числа игроков
@@ -714,15 +1236,16 @@
     document.getElementById('start').addEventListener('click', function () {
       startRace(chosen, lapsChosen);
     });
+    document.addEventListener('pointerdown', function () {
+      sfx.resume();
+      music.start();
+    }, { once: true });
     document.getElementById('again').addEventListener('click', function () {
       startRace(chosen, lapsChosen);
     });
     document.getElementById('to-menu').addEventListener('click', backToMenu);
-    ui.mute.addEventListener('click', function () {
-      sfx.init();
-      sfx.setMuted(!sfx.muted);
-      ui.mute.textContent = sfx.muted ? '🔇' : '🔊';
-    });
+    ui.mute.addEventListener('click', toggleSound);
+    ui.musicBtn.addEventListener('click', toggleMusic);
     document.getElementById('cam').addEventListener('click', function () {
       cameraMode = (cameraMode + 1) % 3;
     });
@@ -739,7 +1262,7 @@
       html += '<span class="kh" style="border-color:#' + new THREE.Color(COLORS[i]).getHexString() + '">' +
         'Игрок ' + (i + 1) + ' → <b>' + HUMAN_KEYS[i].label + '</b></span>';
     }
-    if (n === 1) html += '<span class="kh">или <b>↑</b> / <b>Пробел</b></span>';
+    html += '<span class="kh">порядок: <b>газ · руль влево вправо</b></span>';
     document.getElementById('key-hints').innerHTML = html;
   }
 
@@ -751,13 +1274,46 @@
       laps: totalLaps,
       trackLength: Math.round(track ? track.length : 0),
       lights: intersections ? intersections.map(function (i) { return i.state; }) : [],
+      grannies: grannies.filter(function (g) { return g.active; }).map(function (g) {
+        return { dist: Math.round(g.dist), lane: +g.lane.toFixed(1), angry: g.angry > 0 };
+      }),
+      music: { on: music.enabled, playing: music.playing, level: music.intensity },
       racers: racers.map(function (r) {
         return {
           name: r.name, human: r.isHuman, lap: r.lap, dq: r.dq, finished: r.finished,
-          kmh: Math.round(r.speed * 3.6), dist: Math.round(r.dist), place: r.place
+          kmh: Math.round(r.speed * 3.6), dist: Math.round(r.dist), place: r.place,
+          lane: +r.lane.toFixed(1), steam: Math.round(r.steam), boosting: r.boosting,
+          reason: r.dqReason || null
         };
       })
     };
+  };
+
+  /* Отладка: что под печкой — асфальт, обочина или песок. */
+  Game.groundUnder = function (id) {
+    var r = racers[id || 0];
+    if (!r) return null;
+    var ray = new THREE.Raycaster(
+      new THREE.Vector3(r.mesh.position.x, 20, r.mesh.position.z),
+      new THREE.Vector3(0, -1, 0)
+    );
+    ray.camera = camera;                       // спрайты требуют камеру
+    var meshes = [];
+    scene.traverse(function (o) {
+      if (!o.isMesh) return;
+      var par = o.parent;
+      if (par && (par.userData.wheels || par.userData.armL)) return;   // сама печка и бабушки не нужны
+      meshes.push(o);
+    });
+    var hits = ray.intersectObjects(meshes, false);
+    return hits.slice(0, 3).map(function (h) {
+      return {
+        y: +h.point.y.toFixed(3),
+        color: h.object.material && h.object.material.color ? '#' + h.object.material.color.getHexString() : null,
+        textured: !!(h.object.material && h.object.material.map),
+        verts: h.object.geometry && h.object.geometry.attributes.position ? h.object.geometry.attributes.position.count : 0
+      };
+    });
   };
 
   Game.renderInfo = function () {
@@ -772,4 +1328,5 @@
   global.Game = Game;
   global.__dbg = Game.debug;
   global.__renderInfo = Game.renderInfo;
+  global.__ground = Game.groundUnder;
 })(window);
