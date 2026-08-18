@@ -263,6 +263,170 @@
     o.stop(t + 0.5);
   };
 
+  /* Полицейская сирена: две ноты вверх-вниз. */
+  Sfx.prototype.siren = function (vol, times) {
+    this.init();
+    if (!this.ctx || !vol || vol < 0.03) return;
+    var t = this.ctx.currentTime;
+    var n = times || 3;
+    for (var i = 0; i < n * 2; i++) {
+      var at = t + i * 0.34;
+      var o = this.ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.setValueAtTime(i % 2 ? 640 : 880, at);
+      var bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1200;
+      bp.Q.value = 1.2;
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.linearRampToValueAtTime(0.13 * vol, at + 0.05);
+      g.gain.setValueAtTime(0.13 * vol, at + 0.26);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.33);
+      o.connect(bp).connect(g).connect(this.master);
+      o.start(at);
+      o.stop(at + 0.35);
+    }
+  };
+
+  /* Лязг решётки — печку отправили в тюрьму. */
+  Sfx.prototype.jailClang = function () {
+    this.init();
+    if (!this.ctx) return;
+    var t = this.ctx.currentTime;
+    var freqs = [180, 267, 411];
+    for (var i = 0; i < freqs.length; i++) {
+      var o = this.ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = freqs[i];
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.14, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 1.2);
+    }
+    this.noise(0.4, 0.14, 3200);
+  };
+
+  /* Печка рассыпалась: грохот кирпичей. */
+  Sfx.prototype.crash = function () {
+    this.init();
+    if (!this.ctx) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.4, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.8);
+    for (var i = 0; i < 7; i++) {
+      this.chuff(t + i * 0.07 + Math.random() * 0.05, 0.13, this.master);
+    }
+    this.noise(0.9, 0.16, 900);
+  };
+
+  /* Заехали в лужу. */
+  Sfx.prototype.splash = function (vol) {
+    this.init();
+    if (!this.ctx || !vol || vol < 0.03) return;
+    var g = this.noise(0.45, 0.22 * vol, 1800);
+    if (!g) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(420, t);
+    o.frequency.exponentialRampToValueAtTime(140, t + 0.3);
+    var og = this.ctx.createGain();
+    og.gain.setValueAtTime(0.1 * vol, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.connect(og).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.4);
+  };
+
+  /* Мокрый шлепок — задели таракана. */
+  Sfx.prototype.splat = function (vol) {
+    this.init();
+    if (!this.ctx || !vol) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(160, t);
+    o.frequency.exponentialRampToValueAtTime(48, t + 0.22);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.24 * vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.32);
+    this.noise(0.2, 0.14 * vol, 700);
+  };
+
+  /* Непрерывные звуки: ветер бури и винты вертолёта. */
+  Sfx.prototype.startWind = function () {
+    this.init();
+    if (!this.ctx || this.wind) return this.wind;
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 700;
+    bp.Q.value = 0.6;
+    var lfo = this.ctx.createOscillator();
+    lfo.frequency.value = 0.23;
+    var lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 380;
+    lfo.connect(lfoGain).connect(bp.frequency);
+    var g = this.ctx.createGain();
+    g.gain.value = 0;
+    src.connect(bp).connect(g).connect(this.master);
+    src.start();
+    lfo.start();
+    this.wind = g;
+    return g;
+  };
+
+  Sfx.prototype.setWind = function (level) {
+    if (!this.wind || !this.ctx) return;
+    this.wind.gain.setTargetAtTime(Math.max(0, level) * 0.32, this.ctx.currentTime, 0.3);
+  };
+
+  Sfx.prototype.startRotor = function () {
+    this.init();
+    if (!this.ctx || this.rotor) return this.rotor;
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 380;
+    // «чух-чух» лопастей: быстрое дрожание громкости
+    var chop = this.ctx.createOscillator();
+    chop.type = 'sawtooth';
+    chop.frequency.value = 13;
+    var chopGain = this.ctx.createGain();
+    chopGain.gain.value = 0.55;
+    var g = this.ctx.createGain();
+    g.gain.value = 0;
+    chop.connect(chopGain).connect(g.gain);
+    src.connect(lp).connect(g).connect(this.master);
+    src.start();
+    chop.start();
+    this.rotor = g;
+    return g;
+  };
+
+  Sfx.prototype.setRotor = function (level) {
+    if (!this.rotor || !this.ctx) return;
+    this.rotor.gain.setTargetAtTime(Math.max(0, level) * 0.5, this.ctx.currentTime, 0.2);
+  };
+
   Sfx.prototype.beep = function (freq, dur, gain) {
     this.init();
     if (!this.ctx) return;

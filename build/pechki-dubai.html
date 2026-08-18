@@ -156,6 +156,21 @@
   }
   #granny-dist { color: #ffe08a; font-variant-numeric: tabular-nums; }
 
+  #storm-warn {
+    position: absolute; top: 92px; left: 50%; transform: translateX(-50%);
+    padding: 7px 14px; opacity: 0; transition: opacity .3s;
+    background: rgba(190,130,40,0.9); border-radius: 12px;
+    font-size: 13.5px; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap;
+  }
+  #jail-warn {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    padding: 14px 26px; opacity: 0; transition: opacity .3s;
+    background: rgba(24,12,6,0.86); border: 2px solid #ff8a3d; border-radius: 16px;
+    font-size: clamp(15px, 2.6vw, 22px); font-weight: 900; color: #ff8a3d;
+    text-align: center; white-space: nowrap; box-shadow: 0 0 40px rgba(255,138,61,0.35);
+  }
+  .pedal.jailed { background: rgba(255,138,61,0.3); border-color: #ff8a3d !important; }
+
   /* админ-панель */
   #admin {
     position: absolute; left: 12px; bottom: 12px; width: 268px; max-height: 74vh; overflow: auto;
@@ -264,6 +279,8 @@
   </div>
 
   <div id="granny-warn">🧕 БАБУШКА НА ДОРОГЕ <span id="granny-dist">0 м</span></div>
+  <div id="storm-warn">🌪 ПЕСЧАНАЯ БУРЯ</div>
+  <div id="jail-warn"><span id="jail-text">ТЮРЬМА</span></div>
 
   <div id="flash"></div>
   <div id="pedals"></div>
@@ -276,6 +293,7 @@
     <label><input type="checkbox" id="adm-steam"> Бесконечный пар</label>
     <label><input type="checkbox" id="adm-slowai"> Ослабить компьютер</label>
     <label><input type="checkbox" id="adm-nogranny"> Убрать бабушек</label>
+    <label><input type="checkbox" id="adm-nohazard"> Без бурь, зверей и полиции</label>
 
     <div class="alabel">Светофоры</div>
     <div class="aseg" id="adm-lights">
@@ -296,6 +314,17 @@
     <div class="arow">
       <button id="adm-restart">Начать заново</button>
       <button id="adm-finish">Закончить гонку</button>
+    </div>
+    <div class="arow">
+      <button id="adm-storm">Начать бурю</button>
+      <button id="adm-heli">Вертолёт</button>
+    </div>
+    <div class="arow">
+      <button id="adm-camel">Верблюд сюда</button>
+      <button id="adm-police">Полицию сюда</button>
+    </div>
+    <div class="arow">
+      <button id="adm-free">Выпустить из тюрьмы</button>
     </div>
 
     <div class="astats" id="adm-stats"></div>
@@ -330,7 +359,14 @@
       Загорелся <b>зелёный</b> — слышен гудок паровоза, можно жать.
       Жёлтый — предупреждение, ехать ещё можно.<br>
       <b>Бабушки.</b> По зебре и просто где им удобно дорогу переходят бабушки.
-      <b>Сбил бабушку — снятие с гонки</b>, так что руль в руки и объезжай.<br>
+      <b>Сбил бабушку — снятие с гонки</b>, так что руль в руки и объезжай.
+      Нарушительниц забирает полиция: машина встаёт прямо на дороге, и её надо
+      объехать. <b>Врезался в полицейскую машину — тюрьма на 30 секунд.</b><br>
+      <b>Дорога живая.</b> Иногда выходит верблюд: <b>врезался — печь рассыпается
+      и ты в тюрьме до конца гонки</b>. Пробегает гигантская лакукарача — заденешь,
+      потеряешь ход. На асфальте попадаются лужи: заехал — занос. Иногда налетает
+      <b>песчаная буря</b> и на 10–15 секунд не видно ничего. Сверху пролетает
+      полицейский вертолёт.<br>
       <b>Управление.</b> У каждого игрока свой газ и свой руль (см. выше).
       Держишь газ — разгон, отпустил — торможение. Съехал на обочину — теряешь скорость.
       <b>Супер-ускорение Z</b> есть только у первого игрока: жжёт пар из котла,
@@ -626,6 +662,170 @@
     o.connect(g).connect(out);
     o.start(t);
     o.stop(t + 0.5);
+  };
+
+  /* Полицейская сирена: две ноты вверх-вниз. */
+  Sfx.prototype.siren = function (vol, times) {
+    this.init();
+    if (!this.ctx || !vol || vol < 0.03) return;
+    var t = this.ctx.currentTime;
+    var n = times || 3;
+    for (var i = 0; i < n * 2; i++) {
+      var at = t + i * 0.34;
+      var o = this.ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.setValueAtTime(i % 2 ? 640 : 880, at);
+      var bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1200;
+      bp.Q.value = 1.2;
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.linearRampToValueAtTime(0.13 * vol, at + 0.05);
+      g.gain.setValueAtTime(0.13 * vol, at + 0.26);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.33);
+      o.connect(bp).connect(g).connect(this.master);
+      o.start(at);
+      o.stop(at + 0.35);
+    }
+  };
+
+  /* Лязг решётки — печку отправили в тюрьму. */
+  Sfx.prototype.jailClang = function () {
+    this.init();
+    if (!this.ctx) return;
+    var t = this.ctx.currentTime;
+    var freqs = [180, 267, 411];
+    for (var i = 0; i < freqs.length; i++) {
+      var o = this.ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = freqs[i];
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.14, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 1.2);
+    }
+    this.noise(0.4, 0.14, 3200);
+  };
+
+  /* Печка рассыпалась: грохот кирпичей. */
+  Sfx.prototype.crash = function () {
+    this.init();
+    if (!this.ctx) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.4, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.8);
+    for (var i = 0; i < 7; i++) {
+      this.chuff(t + i * 0.07 + Math.random() * 0.05, 0.13, this.master);
+    }
+    this.noise(0.9, 0.16, 900);
+  };
+
+  /* Заехали в лужу. */
+  Sfx.prototype.splash = function (vol) {
+    this.init();
+    if (!this.ctx || !vol || vol < 0.03) return;
+    var g = this.noise(0.45, 0.22 * vol, 1800);
+    if (!g) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(420, t);
+    o.frequency.exponentialRampToValueAtTime(140, t + 0.3);
+    var og = this.ctx.createGain();
+    og.gain.setValueAtTime(0.1 * vol, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.connect(og).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.4);
+  };
+
+  /* Мокрый шлепок — задели таракана. */
+  Sfx.prototype.splat = function (vol) {
+    this.init();
+    if (!this.ctx || !vol) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(160, t);
+    o.frequency.exponentialRampToValueAtTime(48, t + 0.22);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.24 * vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.32);
+    this.noise(0.2, 0.14 * vol, 700);
+  };
+
+  /* Непрерывные звуки: ветер бури и винты вертолёта. */
+  Sfx.prototype.startWind = function () {
+    this.init();
+    if (!this.ctx || this.wind) return this.wind;
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 700;
+    bp.Q.value = 0.6;
+    var lfo = this.ctx.createOscillator();
+    lfo.frequency.value = 0.23;
+    var lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 380;
+    lfo.connect(lfoGain).connect(bp.frequency);
+    var g = this.ctx.createGain();
+    g.gain.value = 0;
+    src.connect(bp).connect(g).connect(this.master);
+    src.start();
+    lfo.start();
+    this.wind = g;
+    return g;
+  };
+
+  Sfx.prototype.setWind = function (level) {
+    if (!this.wind || !this.ctx) return;
+    this.wind.gain.setTargetAtTime(Math.max(0, level) * 0.32, this.ctx.currentTime, 0.3);
+  };
+
+  Sfx.prototype.startRotor = function () {
+    this.init();
+    if (!this.ctx || this.rotor) return this.rotor;
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 380;
+    // «чух-чух» лопастей: быстрое дрожание громкости
+    var chop = this.ctx.createOscillator();
+    chop.type = 'sawtooth';
+    chop.frequency.value = 13;
+    var chopGain = this.ctx.createGain();
+    chopGain.gain.value = 0.55;
+    var g = this.ctx.createGain();
+    g.gain.value = 0;
+    chop.connect(chopGain).connect(g.gain);
+    src.connect(lp).connect(g).connect(this.master);
+    src.start();
+    chop.start();
+    this.rotor = g;
+    return g;
+  };
+
+  Sfx.prototype.setRotor = function (level) {
+    if (!this.rotor || !this.ctx) return;
+    this.rotor.gain.setTargetAtTime(Math.max(0, level) * 0.5, this.ctx.currentTime, 0.2);
   };
 
   Sfx.prototype.beep = function (freq, dur, gain) {
@@ -1197,6 +1397,34 @@
     var tex = new THREE.CanvasTexture(c);
     var spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
     spr.scale.set(3.6, 0.9, 1);
+    return spr;
+  };
+
+  /* Табличка над печкой с меняющимся текстом (тюрьма, статус). */
+  World.statusSprite = function () {
+    var c = document.createElement('canvas');
+    c.width = 256; c.height = 64;
+    var ctx = c.getContext('2d');
+    var tex = new THREE.CanvasTexture(c);
+    tex.encoding = THREE.sRGBEncoding;
+    var spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+    spr.scale.set(5.2, 1.3, 1);
+    spr.visible = false;
+    spr.userData.set = function (text, color) {
+      ctx.clearRect(0, 0, 256, 64);
+      ctx.fillStyle = 'rgba(12,10,16,0.82)';
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(2, 6, 252, 52, 12); ctx.fill(); }
+      else ctx.fillRect(2, 6, 252, 52);
+      ctx.strokeStyle = color || '#ff8a3d';
+      ctx.lineWidth = 3;
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(2, 6, 252, 52, 12); ctx.stroke(); }
+      ctx.font = 'bold 30px system-ui, -apple-system, sans-serif';
+      ctx.fillStyle = color || '#ff8a3d';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, 128, 33);
+      tex.needsUpdate = true;
+    };
     return spr;
   };
 
@@ -2298,86 +2526,629 @@
     return g;
   };
 
+  /* ---------- Полицейская машина ---------- */
+
+  World.policeTexture = function (text, arabic) {
+    return canvasTexture(256, 64, function (g, w, h) {
+      g.fillStyle = '#f2f4f7';
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = '#1b4f9c';
+      g.fillRect(0, h * 0.54, w, h * 0.2);
+      g.fillStyle = '#1b4f9c';
+      g.font = 'bold ' + (arabic ? 26 : 22) + 'px system-ui, sans-serif';
+      g.textAlign = 'center';
+      g.fillText(text, w / 2, h * 0.4);
+      g.fillStyle = '#c8ced8';
+      g.fillRect(0, h - 3, w, 3);
+    });
+  };
+
+  World.buildPoliceCar = function () {
+    var g = new THREE.Group();
+
+    // Корпус: борта разные — слева по-русски, справа по-арабски.
+    // Порядок групп у BoxGeometry: +X, −X, +Y, −Y, +Z, −Z.
+    var ru = new THREE.MeshLambertMaterial({ map: World.policeTexture('ПОЛИЦИЯ', false) });
+    var ar = new THREE.MeshLambertMaterial({ map: World.policeTexture('شرطة', true) });
+    var plain = new THREE.MeshLambertMaterial({ color: 0xf2f4f7 });
+    var body = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.75, 4.6),
+      [ru, ar, plain, plain, plain, plain]);
+    body.position.y = 0.72;
+    g.add(body);
+
+    var bumpers = [];
+    for (var b = -1; b <= 1; b += 2) {
+      var bumper = new THREE.BoxGeometry(2.16, 0.3, 0.24);
+      bumper.translate(0, 0.5, b * 2.32);
+      bumpers.push(bumper);
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(bumpers), plain));
+
+    // кабина
+    var cabin = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.62, 2.2),
+      new THREE.MeshLambertMaterial({ color: 0x28313d }));
+    cabin.position.set(0, 1.4, -0.15);
+    g.add(cabin);
+
+    // мигалки
+    var bar = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 0.34),
+      new THREE.MeshLambertMaterial({ color: 0x1b2028 }));
+    bar.position.set(0, 1.76, -0.15);
+    g.add(bar);
+
+    var lamps = {}, glows = {};
+    var defs = [['red', 0xff2b2b, -0.34, 255, 60, 60], ['blue', 0x2b6bff, 0.34, 80, 130, 255]];
+    for (var i = 0; i < defs.length; i++) {
+      var d = defs[i];
+      var lamp = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.2, 0.3),
+        new THREE.MeshBasicMaterial({ color: d[1] }));
+      lamp.position.set(d[2], 1.88, -0.15);
+      lamp.userData.baseColor = new THREE.Color(d[1]);
+      g.add(lamp);
+      lamps[d[0]] = lamp;
+
+      var glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: World.glowTexture(d[3], d[4], d[5]), transparent: true,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      }));
+      glow.scale.set(3.4, 3.4, 1);
+      glow.position.copy(lamp.position);
+      g.add(glow);
+      glows[d[0]] = glow;
+    }
+
+    // колёса
+    var wheels = [];
+    for (var wx = -1; wx <= 1; wx += 2) {
+      for (var wz = -1; wz <= 1; wz += 2) {
+        var wheel = new THREE.CylinderGeometry(0.38, 0.38, 0.28, 10);
+        var m = new THREE.Matrix4().makeRotationZ(Math.PI / 2);
+        m.setPosition(wx * 1.0, 0.38, wz * 1.5);
+        wheel.applyMatrix4(m);
+        wheels.push(wheel);
+      }
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(wheels),
+      new THREE.MeshLambertMaterial({ color: 0x1a1a1e })));
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 5.6),
+      new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.05;
+    g.add(shadow);
+
+    g.visible = false;
+    g.userData = { lamps: lamps, glows: glows, blob: shadow };
+    return g;
+  };
+
+  /* Мигалки: попеременно красная и синяя. */
+  World.flashPolice = function (mesh, t) {
+    var red = (t % 0.7) < 0.35;
+    var l = mesh.userData.lamps, gl = mesh.userData.glows;
+    l.red.material.color.copy(l.red.userData.baseColor).multiplyScalar(red ? 1 : 0.2);
+    l.blue.material.color.copy(l.blue.userData.baseColor).multiplyScalar(red ? 0.2 : 1);
+    gl.red.visible = red;
+    gl.blue.visible = !red;
+  };
+
+  /* ---------- Полицейский вертолёт ---------- */
+
+  World.buildHelicopter = function () {
+    var g = new THREE.Group();
+    var white = new THREE.MeshLambertMaterial({ color: 0xeef1f5 });
+    var blue = new THREE.MeshLambertMaterial({ color: 0x1b4f9c });
+    var dark = new THREE.MeshLambertMaterial({ color: 0x2a3240 });
+
+    var hull = [];
+    var cab = new THREE.SphereGeometry(1.5, 14, 12);
+    var mc = new THREE.Matrix4().makeScale(1, 0.92, 1.5);
+    cab.applyMatrix4(mc);
+    hull.push(cab);
+    var boom = new THREE.CylinderGeometry(0.3, 0.18, 4.4, 8);
+    var mb = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+    mb.setPosition(0, 0.25, -3.2);
+    boom.applyMatrix4(mb);
+    hull.push(boom);
+    var fin = new THREE.BoxGeometry(0.12, 1.1, 0.8);
+    fin.translate(0, 0.8, -5.1);
+    hull.push(fin);
+    g.add(new THREE.Mesh(World.mergeGeometries(hull), white));
+
+    var stripe = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.34, 2.2), blue);
+    stripe.position.set(0, -0.1, 0.2);
+    g.add(stripe);
+
+    var glass = new THREE.Mesh(new THREE.SphereGeometry(1.05, 12, 10), dark);
+    glass.scale.set(0.95, 0.8, 1);
+    glass.position.set(0, 0.15, 1.15);
+    g.add(glass);
+
+    var skids = [];
+    for (var sx = -1; sx <= 1; sx += 2) {
+      var skid = new THREE.CylinderGeometry(0.08, 0.08, 3.4, 6);
+      var ms = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      ms.setPosition(sx * 0.9, -1.5, 0.2);
+      skid.applyMatrix4(ms);
+      skids.push(skid);
+      for (var k = -1; k <= 1; k += 2) {
+        var leg = new THREE.CylinderGeometry(0.07, 0.07, 0.8, 6);
+        leg.translate(sx * 0.9, -1.1, k * 0.9);
+        skids.push(leg);
+      }
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(skids), dark));
+
+    // винты
+    var rotor = new THREE.Group();
+    var blades = [];
+    for (var i = 0; i < 2; i++) {
+      var blade = new THREE.BoxGeometry(11, 0.08, 0.5);
+      var mr = new THREE.Matrix4().makeRotationY(i * Math.PI / 2);
+      blade.applyMatrix4(mr);
+      blades.push(blade);
+    }
+    rotor.add(new THREE.Mesh(World.mergeGeometries(blades), dark));
+    rotor.position.y = 1.5;
+    g.add(rotor);
+
+    var tailRotor = new THREE.Group();
+    var tb = [];
+    for (var j = 0; j < 2; j++) {
+      var tblade = new THREE.BoxGeometry(0.1, 1.8, 0.24);
+      var mt = new THREE.Matrix4().makeRotationZ(j * Math.PI / 2);
+      tblade.applyMatrix4(mt);
+      tb.push(tblade);
+    }
+    tailRotor.add(new THREE.Mesh(World.mergeGeometries(tb), dark));
+    tailRotor.position.set(0.2, 0.8, -5.1);
+    g.add(tailRotor);
+
+    // прожектор
+    var beam = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: World.glowTexture(255, 245, 200), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    beam.scale.set(9, 9, 1);
+    beam.position.set(0, -1.6, 0.6);
+    g.add(beam);
+
+    g.visible = false;
+    g.userData = { rotor: rotor, tailRotor: tailRotor, beam: beam };
+    return g;
+  };
+
+  /* ---------- Верблюд ---------- */
+
+  World.buildCamel = function () {
+    var g = new THREE.Group();
+    var hide = new THREE.MeshLambertMaterial({ color: 0xc79a5b });
+    var dark = new THREE.MeshLambertMaterial({ color: 0x8a6a3f });
+
+    var parts = [];
+    var body = new THREE.SphereGeometry(0.95, 14, 12);
+    var mb = new THREE.Matrix4().makeScale(0.85, 0.85, 1.5);
+    mb.setPosition(0, 1.65, 0);
+    body.applyMatrix4(mb);
+    parts.push(body);
+
+    for (var hmp = -1; hmp <= 1; hmp += 2) {
+      var hump = new THREE.SphereGeometry(0.5, 12, 10);
+      var mh = new THREE.Matrix4().makeScale(0.85, 0.9, 1);
+      mh.setPosition(0, 2.35, hmp * 0.42);
+      hump.applyMatrix4(mh);
+      parts.push(hump);
+    }
+
+    var neck = new THREE.CylinderGeometry(0.22, 0.33, 1.5, 10);
+    var mn = new THREE.Matrix4().makeRotationX(-0.45);
+    mn.setPosition(0, 2.3, 1.1);
+    neck.applyMatrix4(mn);
+    parts.push(neck);
+
+    var head = new THREE.SphereGeometry(0.3, 12, 10);
+    var mhd = new THREE.Matrix4().makeScale(0.8, 0.85, 1.25);
+    mhd.setPosition(0, 2.95, 1.7);
+    head.applyMatrix4(mhd);
+    parts.push(head);
+
+    var muzzle = new THREE.SphereGeometry(0.18, 10, 8);
+    muzzle.translate(0, 2.82, 2.05);
+    parts.push(muzzle);
+    g.add(new THREE.Mesh(World.mergeGeometries(parts), hide));
+
+    var legs = [];
+    var legPivots = [];
+    for (var lx = -1; lx <= 1; lx += 2) {
+      for (var lz = -1; lz <= 1; lz += 2) {
+        var pivot = new THREE.Group();
+        pivot.position.set(lx * 0.5, 1.5, lz * 0.85);
+        var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.12, 1.5, 8), hide);
+        leg.position.y = -0.75;
+        pivot.add(leg);
+        var hoof = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.2, 8), dark);
+        hoof.position.y = -1.55;
+        pivot.add(hoof);
+        g.add(pivot);
+        legPivots.push(pivot);
+      }
+    }
+
+    var tail = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.03, 0.9, 6), dark);
+    tail.position.set(0, 2.0, -1.4);
+    tail.rotation.x = 0.5;
+    g.add(tail);
+
+    // попона
+    var rug = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.12, 1.2),
+      new THREE.MeshLambertMaterial({ color: 0xc0392b }));
+    rug.position.set(0, 2.2, -0.1);
+    g.add(rug);
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(4, 4.6),
+      new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.05;
+    g.add(shadow);
+
+    g.visible = false;
+    g.userData = { legs: legPivots, blob: shadow };
+    return g;
+  };
+
+  /* ---------- Гигантский таракан ---------- */
+
+  World.buildRoach = function () {
+    var g = new THREE.Group();
+    var shell = new THREE.MeshLambertMaterial({ color: 0x5a3220 });
+    var dark = new THREE.MeshLambertMaterial({ color: 0x2f1c12 });
+
+    var parts = [];
+    var abdomen = new THREE.SphereGeometry(1.1, 14, 12);
+    var ma = new THREE.Matrix4().makeScale(0.85, 0.42, 1.5);
+    ma.setPosition(0, 0.75, -0.4);
+    abdomen.applyMatrix4(ma);
+    parts.push(abdomen);
+    var thorax = new THREE.SphereGeometry(0.75, 12, 10);
+    var mt = new THREE.Matrix4().makeScale(0.95, 0.5, 0.9);
+    mt.setPosition(0, 0.85, 1.05);
+    thorax.applyMatrix4(mt);
+    parts.push(thorax);
+    var head = new THREE.SphereGeometry(0.4, 10, 8);
+    var mh = new THREE.Matrix4().makeScale(0.9, 0.6, 0.8);
+    mh.setPosition(0, 0.8, 1.75);
+    head.applyMatrix4(mh);
+    parts.push(head);
+    g.add(new THREE.Mesh(World.mergeGeometries(parts), shell));
+
+    // надкрылья
+    for (var wx = -1; wx <= 1; wx += 2) {
+      var wing = new THREE.Mesh(new THREE.SphereGeometry(0.9, 10, 8), dark);
+      wing.scale.set(0.45, 0.16, 1.35);
+      wing.position.set(wx * 0.35, 1.05, -0.35);
+      wing.rotation.z = wx * 0.18;
+      g.add(wing);
+    }
+
+    // усы
+    var antennae = [];
+    for (var ax = -1; ax <= 1; ax += 2) {
+      var ant = new THREE.CylinderGeometry(0.04, 0.02, 2.2, 5);
+      var man = new THREE.Matrix4().makeRotationX(1.15);
+      var rot = new THREE.Matrix4().makeRotationZ(ax * 0.35);
+      man.premultiply(rot);
+      man.setPosition(ax * 0.2, 1.25, 2.5);
+      ant.applyMatrix4(man);
+      antennae.push(ant);
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(antennae), dark));
+
+    // лапы: три пары, каждая качается при беге
+    var legPivots = [];
+    for (var i = 0; i < 3; i++) {
+      for (var lx = -1; lx <= 1; lx += 2) {
+        var pivot = new THREE.Group();
+        pivot.position.set(lx * 0.55, 0.72, 1.1 - i * 0.95);
+        var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.05, 1.1, 6), dark);
+        leg.position.set(lx * 0.4, -0.3, 0);
+        leg.rotation.z = lx * 0.9;
+        pivot.add(leg);
+        g.add(pivot);
+        legPivots.push(pivot);
+      }
+    }
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 4.4),
+      new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.05;
+    g.add(shadow);
+
+    g.visible = false;
+    g.userData = { legs: legPivots, blob: shadow };
+    return g;
+  };
+
+  /* ---------- Лужа ---------- */
+
+  World.buildPuddle = function () {
+    var tex = canvasTexture(64, 64, function (g, w, h) {
+      var grd = g.createRadialGradient(w / 2, h / 2, 2, w / 2, h / 2, w / 2);
+      grd.addColorStop(0, 'rgba(70,120,150,0.75)');
+      grd.addColorStop(0.65, 'rgba(90,140,170,0.55)');
+      grd.addColorStop(1, 'rgba(120,160,180,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.ellipse(w / 2, h / 2, w / 2, h / 2.4, 0, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = 'rgba(255,255,255,0.35)';
+      g.lineWidth = 2;
+      g.beginPath(); g.ellipse(w / 2 - 6, h / 2 - 5, 12, 5, 0.4, 0, Math.PI * 2); g.stroke();
+    });
+    var mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.renderOrder = 1;
+    return mesh;
+  };
+
+  /* ---------- Песчаная буря ---------- */
+
+  World.SandStorm = function (scene, count) {
+    var n = count || 900;
+    var geo = new THREE.BufferGeometry();
+    var pos = new Float32Array(n * 3);
+    this.box = { x: 220, y: 60, z: 220 };
+    for (var i = 0; i < n; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * this.box.x;
+      pos[i * 3 + 1] = Math.random() * this.box.y;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * this.box.z;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    var tex = canvasTexture(32, 32, function (g, w, h) {
+      var grd = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+      grd.addColorStop(0, 'rgba(226,200,147,0.95)');
+      grd.addColorStop(1, 'rgba(226,200,147,0)');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, w, h);
+    });
+    this.points = new THREE.Points(geo, new THREE.PointsMaterial({
+      map: tex, size: 1.7, transparent: true, opacity: 0,
+      depthWrite: false, sizeAttenuation: true, fog: false
+    }));
+    this.points.frustumCulled = false;
+    this.points.visible = false;
+    scene.add(this.points);
+    this.wind = new THREE.Vector3(-22, 1.5, 9);
+  };
+
+  /* Частицы летят по ветру и заворачиваются в коробке вокруг камеры. */
+  World.SandStorm.prototype.update = function (dt, level, camPos) {
+    this.points.visible = level > 0.01;
+    this.points.material.opacity = Math.min(0.85, level * 0.9);
+    if (!this.points.visible) return;
+    var arr = this.points.geometry.attributes.position.array;
+    var bx = this.box.x, by = this.box.y, bz = this.box.z;
+    for (var i = 0; i < arr.length; i += 3) {
+      arr[i] += this.wind.x * dt;
+      arr[i + 1] += this.wind.y * dt * (0.5 + Math.random());
+      arr[i + 2] += this.wind.z * dt;
+      var dx = arr[i] - camPos.x, dy = arr[i + 1] - camPos.y, dz = arr[i + 2] - camPos.z;
+      if (dx < -bx / 2) arr[i] += bx; else if (dx > bx / 2) arr[i] -= bx;
+      if (dy < -by / 2) arr[i] += by; else if (dy > by / 2) arr[i] -= by;
+      if (dz < -bz / 2) arr[i] += bz; else if (dz > bz / 2) arr[i] -= bz;
+    }
+    this.points.geometry.attributes.position.needsUpdate = true;
+  };
+
   /* ---------- Бабушка ---------- */
 
-  var GRANNY_KERCHIEFS = [0xd83a3a, 0xf0c020, 0x3f7fd8, 0xe066b0, 0x36b56a];
-  var GRANNY_COATS = [0x4a5a72, 0x6b4a5a, 0x3f5a48, 0x6a5f42, 0x53476b];
+  var GRANNY_KERCHIEFS = ['#d83a3a', '#f0c020', '#3f7fd8', '#e066b0', '#36b56a', '#e8e2d4'];
+  var GRANNY_COATS = [0x4a5a72, 0x6b4a5a, 0x3f5a48, 0x6a5f42, 0x53476b, 0x7a5b4a];
+  var GRANNY_SKIRTS = [0x3a3f4a, 0x5b3f46, 0x40402f, 0x3f4a52];
 
+  /* Лицо: круглые щёки, добрые глаза, морщинки — рисуем текстурой,
+     геометрией такое не собрать без сотни полигонов. */
+  World.grannyFaceTexture = function () {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#f0c9a4';
+      g.fillRect(0, 0, w, h);
+      // лицо смотрит в −Z, это середина развёртки сферы
+      var cx = w * 0.5, cy = h * 0.52;
+      // румянец
+      g.fillStyle = 'rgba(224,122,110,0.5)';
+      g.beginPath(); g.arc(cx - 17, cy + 6, 9, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(cx + 17, cy + 6, 9, 0, Math.PI * 2); g.fill();
+      // глаза
+      g.fillStyle = '#3a2b22';
+      g.beginPath(); g.arc(cx - 10, cy - 6, 3.2, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(cx + 10, cy - 6, 3.2, 0, Math.PI * 2); g.fill();
+      // брови и морщинки
+      g.strokeStyle = 'rgba(120,90,70,0.75)';
+      g.lineWidth = 1.6;
+      g.beginPath(); g.moveTo(cx - 15, cy - 13); g.quadraticCurveTo(cx - 10, cy - 16, cx - 5, cy - 13); g.stroke();
+      g.beginPath(); g.moveTo(cx + 5, cy - 13); g.quadraticCurveTo(cx + 10, cy - 16, cx + 15, cy - 13); g.stroke();
+      g.beginPath(); g.moveTo(cx - 20, cy - 2); g.lineTo(cx - 15, cy - 1); g.stroke();
+      g.beginPath(); g.moveTo(cx + 15, cy - 1); g.lineTo(cx + 20, cy - 2); g.stroke();
+      // нос картошкой
+      g.fillStyle = 'rgba(214,150,120,0.85)';
+      g.beginPath(); g.arc(cx, cy + 2, 4.2, 0, Math.PI * 2); g.fill();
+      // рот
+      g.strokeStyle = '#8c4a44';
+      g.lineWidth = 2;
+      g.beginPath(); g.moveTo(cx - 6, cy + 15); g.quadraticCurveTo(cx, cy + 19, cx + 6, cy + 15); g.stroke();
+    });
+  };
+
+  /* Платок в горошек, завязанный под подбородком. */
+  function kerchiefTexture(color) {
+    return canvasTexture(64, 64, function (g, w, h) {
+      g.fillStyle = color;
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(255,255,255,0.75)';
+      for (var y = 6; y < h; y += 14) {
+        for (var x = (y % 28 === 6 ? 6 : 13); x < w; x += 14) {
+          g.beginPath(); g.arc(x, y, 2.4, 0, Math.PI * 2); g.fill();
+        }
+      }
+      g.strokeStyle = 'rgba(0,0,0,0.18)';
+      g.lineWidth = 2;
+      g.strokeRect(1, 1, w - 2, h - 2);
+    });
+  }
+
+  var GRANNY_FACE = null;
+
+  /* Бабушка ростом ~1.55 м: валенки, длинная юбка с фартуком, телогрейка,
+     платок вокруг лица, авоська с батоном и молоком, трость. Спина сутулая. */
   World.buildGranny = function () {
     var g = new THREE.Group();
+    if (!GRANNY_FACE) GRANNY_FACE = World.grannyFaceTexture();
     var coatColor = GRANNY_COATS[Math.floor(Math.random() * GRANNY_COATS.length)];
-    var kerchief = GRANNY_KERCHIEFS[Math.floor(Math.random() * GRANNY_KERCHIEFS.length)];
+    var skirtColor = GRANNY_SKIRTS[Math.floor(Math.random() * GRANNY_SKIRTS.length)];
+    var kerColor = GRANNY_KERCHIEFS[Math.floor(Math.random() * GRANNY_KERCHIEFS.length)];
+    var skinMat = new THREE.MeshLambertMaterial({ color: 0xefc7a2 });
 
-    // пальто и юбка — одной сеткой
-    var body = [];
-    var skirt = new THREE.CylinderGeometry(0.34, 0.56, 0.85, 10);
-    skirt.translate(0, 0.42, 0);
-    body.push(skirt);
-    var coat = new THREE.CylinderGeometry(0.3, 0.36, 0.62, 10);
-    coat.translate(0, 1.13, 0);
-    body.push(coat);
-    g.add(new THREE.Mesh(World.mergeGeometries(body),
+    // валенки
+    var boots = [];
+    for (var bx = -1; bx <= 1; bx += 2) {
+      var shaft = new THREE.CylinderGeometry(0.105, 0.12, 0.3, 8);
+      shaft.translate(bx * 0.11, 0.15, 0);
+      boots.push(shaft);
+      var foot = new THREE.BoxGeometry(0.16, 0.1, 0.28);
+      foot.translate(bx * 0.11, 0.05, 0.06);
+      boots.push(foot);
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(boots),
+      new THREE.MeshLambertMaterial({ color: 0x6b6155 })));
+
+    // юбка до пят
+    var skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.44, 0.64, 14),
+      new THREE.MeshLambertMaterial({ color: skirtColor }));
+    skirt.position.y = 0.6;
+    g.add(skirt);
+
+    // фартук
+    var apron = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.4, 0.05),
+      new THREE.MeshLambertMaterial({ color: 0xd8cdb6 }));
+    apron.position.set(0, 0.6, 0.33);
+    g.add(apron);
+
+    // сутулая верхняя половина
+    var upper = new THREE.Group();
+    upper.position.y = 0.9;
+    upper.rotation.x = 0.17;
+    g.add(upper);
+
+    // телогрейка
+    var coat = [];
+    var chest = new THREE.CylinderGeometry(0.24, 0.28, 0.44, 14);
+    chest.translate(0, 0.22, 0);
+    coat.push(chest);
+    var shoulders = new THREE.SphereGeometry(0.235, 12, 8);
+    var msh = new THREE.Matrix4().makeScale(1.05, 0.62, 0.92);
+    msh.setPosition(0, 0.43, 0);
+    shoulders.applyMatrix4(msh);
+    coat.push(shoulders);
+    upper.add(new THREE.Mesh(World.mergeGeometries(coat),
       new THREE.MeshLambertMaterial({ color: coatColor })));
 
-    var head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10),
-      new THREE.MeshLambertMaterial({ color: 0xe8c39a }));
-    head.position.y = 1.6;
-    g.add(head);
+    // голова: лицо развёрнуто вперёд (в −Z)
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.145, 16, 12),
+      new THREE.MeshLambertMaterial({ map: GRANNY_FACE }));
+    head.position.y = 0.6;
+    head.rotation.y = -Math.PI / 2;      // разворачиваем лицо вперёд (+Z у модели)
+    upper.add(head);
 
-    // платок с узелком — одной сеткой
-    var scarfParts = [];
-    var scarf = new THREE.SphereGeometry(0.235, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
-    scarf.translate(0, 1.62, 0);
-    scarfParts.push(scarf);
-    var knot = new THREE.SphereGeometry(0.1, 8, 6);
-    knot.translate(0, 1.45, -0.16);
-    scarfParts.push(knot);
-    g.add(new THREE.Mesh(World.mergeGeometries(scarfParts),
-      new THREE.MeshLambertMaterial({ color: kerchief })));
+    // платок обнимает голову сзади и с боков, лицо остаётся открытым
+    var kerTex = kerchiefTexture(kerColor);
+    var scarf = [];
+    // купол закрывает только макушку выше бровей, лицо остаётся открытым
+    var dome = new THREE.SphereGeometry(0.163, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.46);
+    dome.translate(0, 0.6, 0);
+    scarf.push(dome);
+    // затылок и «уши» платка
+    var backFold = new THREE.SphereGeometry(0.135, 12, 10);
+    var mbf = new THREE.Matrix4().makeScale(1.05, 0.95, 0.75);
+    mbf.setPosition(0, 0.57, -0.075);
+    backFold.applyMatrix4(mbf);
+    scarf.push(backFold);
+    for (var kx = -1; kx <= 1; kx += 2) {
+      var side = new THREE.SphereGeometry(0.075, 8, 8);
+      var msd = new THREE.Matrix4().makeScale(0.7, 1.25, 1);
+      msd.setPosition(kx * 0.125, 0.56, -0.02);
+      side.applyMatrix4(msd);
+      scarf.push(side);
+    }
+    // узелок и кончики платка под подбородком
+    var knot = new THREE.SphereGeometry(0.055, 8, 6);
+    knot.translate(0, 0.47, 0.1);
+    scarf.push(knot);
+    var tail = new THREE.BoxGeometry(0.12, 0.15, 0.05);
+    tail.translate(0, 0.4, 0.11);
+    scarf.push(tail);
+    upper.add(new THREE.Mesh(World.mergeGeometries(scarf),
+      new THREE.MeshLambertMaterial({ map: kerTex, side: THREE.DoubleSide })));
 
-    // руки: одна с авоськой, вторая может грозить кулаком
-    var skinMat = new THREE.MeshLambertMaterial({ color: 0xe8c39a });
-    var armL = new THREE.Group();
-    var armLMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.55, 6), skinMat);
-    armLMesh.position.y = -0.27;
-    armL.add(armLMesh);
-    armL.position.set(-0.32, 1.36, 0);
-    g.add(armL);
+    // седая прядь у лица
+    var hair = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.1),
+      new THREE.MeshLambertMaterial({ color: 0xe8e6e0 }));
+    hair.position.set(0, 0.675, 0.085);
+    upper.add(hair);
 
-    var armR = new THREE.Group();
-    var armRMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.55, 6), skinMat);
-    armRMesh.position.y = -0.27;
-    armR.add(armRMesh);
-    armR.position.set(0.32, 1.36, 0);
-    g.add(armR);
+    // руки: рукав телогрейки и кисть
+    function arm(side) {
+      var group = new THREE.Group();
+      var sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.065, 0.36, 8),
+        new THREE.MeshLambertMaterial({ color: coatColor }));
+      sleeve.position.y = -0.18;
+      group.add(sleeve);
+      var hand = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6), skinMat);
+      hand.position.y = -0.38;
+      group.add(hand);
+      group.position.set(side * 0.26, 0.38, 0.01);
+      upper.add(group);
+      return group;
+    }
+    var armL = arm(-1);
+    var armR = arm(1);
 
-    var bag = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.34, 0.18),
-      new THREE.MeshLambertMaterial({ color: 0xb9843f }));
-    bag.position.set(-0.34, 0.88, 0.04);
-    g.add(bag);
+    // авоська с батоном и молоком
+    var bag = new THREE.Group();
+    bag.add(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.17),
+      new THREE.MeshLambertMaterial({ color: 0xb9843f })));
+    var loaf = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.26, 8),
+      new THREE.MeshLambertMaterial({ color: 0xd8a860 }));
+    loaf.position.set(0.05, 0.17, 0);
+    loaf.rotation.z = 0.35;
+    bag.add(loaf);
+    var milk = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.2, 8),
+      new THREE.MeshLambertMaterial({ color: 0xf2f2ee }));
+    milk.position.set(-0.06, 0.15, 0.02);
+    bag.add(milk);
+    bag.position.set(0, -0.52, 0.01);
+    armL.add(bag);
 
-    // трость: висит в правой руке и качается вместе с ней
+    // трость
     var caneParts = [];
-    var stick = new THREE.CylinderGeometry(0.035, 0.048, 1.0, 6);
-    stick.translate(0, -1.05, 0.02);
+    var stick = new THREE.CylinderGeometry(0.03, 0.038, 0.9, 6);
+    stick.translate(0, -0.85, 0.01);
     caneParts.push(stick);
-    var handle = new THREE.CylinderGeometry(0.036, 0.036, 0.24, 6);
+    var handle = new THREE.CylinderGeometry(0.032, 0.032, 0.2, 6);
     var mh = new THREE.Matrix4().makeRotationZ(Math.PI / 2.4);
-    mh.setPosition(0.09, -0.53, 0.02);
+    mh.setPosition(0.075, -0.4, 0.01);
     handle.applyMatrix4(mh);
     caneParts.push(handle);
     var cane = new THREE.Mesh(World.mergeGeometries(caneParts),
       new THREE.MeshLambertMaterial({ color: 0x7a5a34 }));
     armR.add(cane);
 
-    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5),
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.4),
       new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.04;
     g.add(shadow);
 
     g.visible = false;
-    g.userData = { armL: armL, armR: armR, bag: bag, cane: cane, blob: shadow };
+    g.userData = { armL: armL, armR: armR, bag: bag, cane: cane, blob: shadow, upper: upper };
     return g;
   };
 
@@ -2474,6 +3245,12 @@
   var racers = [];
   var grannies = [];
   var granniesTimer = 0;
+  var police = [];
+  var camel = null;
+  var roach = null;
+  var puddles = [];
+  var heli = null;
+  var storm = { level: 0, active: false, timer: 45, left: 0, system: null };
   var sfx = new Sfx();
   var music = new Music(sfx);
   var engineNode = null;
@@ -2497,6 +3274,7 @@
     infiniteSteam: false,
     weakAI: false,
     noGrannies: false,
+    noHazards: false,
     lights: 'auto'
   };
   var sunLight = null;
@@ -2585,6 +3363,370 @@
     addStartLine();
     smoke = new World.SmokeSystem(scene, 300);
     createGrannies();
+    createHazards();
+  }
+
+  /* ---------------- Полиция, звери, лужи, буря ---------------- */
+
+  function createHazards() {
+    for (var i = 0; i < 2; i++) {
+      var mesh = World.buildPoliceCar();
+      scene.add(mesh);
+      police.push({ isPolice: true, mesh: mesh, active: false, dist: 0, lane: 0,
+        phase: 'parked', timer: 0, granny: null, blink: 0 });
+    }
+
+    var cm = World.buildCamel();
+    scene.add(cm);
+    camel = { isCamel: true, mesh: cm, active: false, dist: 0, lane: 0, dir: 1,
+      speed: 1, walk: 0, timer: 25 + Math.random() * 30 };
+
+    var rm = World.buildRoach();
+    scene.add(rm);
+    roach = { isRoach: true, mesh: rm, active: false, dist: 0, lane: 0, dir: 1,
+      speed: 5, walk: 0, timer: 20 + Math.random() * 25 };
+
+    var hm = World.buildHelicopter();
+    scene.add(hm);
+    heli = { mesh: hm, active: false, dist: 0, side: 1, timer: 30 + Math.random() * 40, spin: 0 };
+
+    storm.system = new World.SandStorm(scene, 900);
+
+    for (var k = 0; k < 9; k++) {
+      var pm = World.buildPuddle();
+      pm.visible = false;
+      scene.add(pm);
+      puddles.push({ mesh: pm, dist: 0, lane: 0, radius: 4 });
+    }
+  }
+
+  function resetHazards() {
+    for (var i = 0; i < police.length; i++) {
+      police[i].active = false;
+      police[i].mesh.visible = false;
+    }
+    camel.active = false; camel.mesh.visible = false; camel.timer = 30 + Math.random() * 30;
+    roach.active = false; roach.mesh.visible = false; roach.timer = 22 + Math.random() * 25;
+    heli.active = false; heli.mesh.visible = false; heli.timer = 25 + Math.random() * 35;
+    storm.active = false; storm.level = 0; storm.timer = 40 + Math.random() * 40; storm.left = 0;
+    sfx.setWind(0);
+    sfx.setRotor(0);
+
+    // лужи раскидываем заново на каждый заезд
+    for (var k = 0; k < puddles.length; k++) {
+      var p = puddles[k];
+      p.dist = track.length * (k + 0.35 + Math.random() * 0.4) / puddles.length;
+      p.lane = (Math.random() - 0.5) * 13;
+      p.radius = 3.4 + Math.random() * 2.6;
+      var pt = track.pointAt(p.dist);
+      var n = track.sideAt(p.dist);
+      var t = track.tangentAt(p.dist);
+      p.mesh.position.copy(pt).addScaledVector(n, p.lane);
+      p.mesh.position.y = pt.y + 0.035;
+      p.mesh.scale.set(p.radius * 2, p.radius * 1.5, 1);
+      p.mesh.rotation.set(-Math.PI / 2, 0, 0);
+      p.mesh.rotateZ(-Math.atan2(t.x, t.z));
+      p.mesh.visible = true;
+    }
+  }
+
+  /* Полиция приезжает к нарушительнице и перекрывает часть дороги. */
+  function spawnPolice(granny) {
+    var free = null;
+    for (var i = 0; i < police.length; i++) if (!police[i].active) { free = police[i]; break; }
+    if (!free) return;
+    for (var j = 0; j < police.length; j++) {
+      if (police[j].active && Math.abs(track.norm(police[j].dist - granny.dist)) < 160) return;
+    }
+    free.active = true;
+    free.dist = track.norm(granny.dist + 4);
+    free.lane = Math.max(-6.5, Math.min(6.5, granny.lane));
+    free.phase = 'parked';
+    free.timer = 13 + Math.random() * 5;
+    free.granny = granny;
+    free.blink = 0;
+    free.mesh.visible = true;
+    granny.caught = true;
+
+    var d = camera.position.distanceTo(free.mesh.position);
+    sfx.siren(Math.max(0, 1 - d / 260), 3);
+    if (d < 260) flash('Полиция забирает бабушку — объезжай машину!', '#5dd6ff');
+  }
+
+  function updatePolice(dt) {
+    for (var i = 0; i < police.length; i++) {
+      var c = police[i];
+      if (!c.active) continue;
+      c.blink += dt;
+      c.timer -= dt;
+      World.flashPolice(c.mesh, c.blink);
+
+      // бабушку увозят через несколько секунд
+      if (c.granny && c.timer < 8 && c.granny.active) {
+        c.granny.active = false;
+        c.granny.mesh.visible = false;
+        c.granny = null;
+      }
+      if (c.timer <= 0) {
+        c.active = false;
+        c.mesh.visible = false;
+        continue;
+      }
+
+      var p = track.pointAt(c.dist);
+      var n = track.sideAt(c.dist);
+      var t = track.tangentAt(c.dist);
+      c.mesh.position.copy(p).addScaledVector(n, c.lane);
+      c.mesh.position.y = p.y;
+      c.mesh.rotation.order = 'YXZ';
+      c.mesh.rotation.y = Math.atan2(t.x, t.z) + 0.35;
+      c.mesh.rotation.x = -Math.atan(track.slopeAt(c.dist));
+    }
+  }
+
+  /* Верблюд и таракан переходят дорогу так же, как бабушки. */
+  function spawnCrosser(obj, speed, aheadMin, aheadMax) {
+    var lead = -Infinity;
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (!r.dq && !r.finished && r.dist > lead) lead = r.dist;
+    }
+    if (lead === -Infinity) return;
+    obj.active = true;
+    obj.dist = track.norm(lead + aheadMin + Math.random() * (aheadMax - aheadMin));
+    obj.dir = Math.random() < 0.5 ? 1 : -1;
+    obj.lane = -obj.dir * (MAX_LANE + 5);
+    obj.speed = speed;
+    obj.walk = 0;
+    obj.mesh.visible = true;
+  }
+
+  function updateCrosser(obj, dt, legSwing) {
+    if (!obj.active) return;
+    obj.walk += dt * legSwing;
+    obj.lane += obj.dir * obj.speed * dt;
+    var p = track.pointAt(obj.dist);
+    var n = track.sideAt(obj.dist);
+    var t = track.tangentAt(obj.dist);
+    obj.mesh.position.copy(p).addScaledVector(n, obj.lane);
+    obj.mesh.position.y = p.y;
+    obj.mesh.rotation.y = Math.atan2(t.x, t.z) + obj.dir * Math.PI / 2;
+    var legs = obj.mesh.userData.legs;
+    for (var i = 0; i < legs.length; i++) {
+      legs[i].rotation.x = Math.sin(obj.walk + i * 1.7) * 0.5;
+    }
+    if (Math.abs(obj.lane) > MAX_LANE + 6 && obj.lane * obj.dir > 0) {
+      obj.active = false;
+      obj.mesh.visible = false;
+    }
+  }
+
+  function updateAnimals(dt) {
+    if (!admin.noHazards) {
+      camel.timer -= dt;
+      if (camel.timer <= 0 && !camel.active) {
+        camel.timer = 40 + Math.random() * 40;
+        spawnCrosser(camel, 0.8 + Math.random() * 0.5, 120, 220);
+        flash('Верблюд вышел на дорогу!', '#e0b070');
+      }
+      roach.timer -= dt;
+      if (roach.timer <= 0 && !roach.active) {
+        roach.timer = 32 + Math.random() * 35;
+        spawnCrosser(roach, 4.5 + Math.random() * 2, 110, 200);
+        flash('Лакукарача перебегает дорогу!', '#c98b5a');
+      }
+    }
+    updateCrosser(camel, dt, 3);
+    updateCrosser(roach, dt, 14);
+    // таракан ещё и виляет
+    if (roach.active) roach.mesh.rotation.z = Math.sin(roach.walk * 0.6) * 0.12;
+  }
+
+  /* Полицейский вертолёт проносится над трассой. */
+  function updateHeli(dt) {
+    var f = focusRacer();
+    if (!heli.active) {
+      heli.timer -= dt;
+      if (heli.timer <= 0 && f && !admin.noHazards) {
+        heli.timer = 45 + Math.random() * 45;
+        heli.active = true;
+        heli.dist = f.dist - 260;
+        heli.side = Math.random() < 0.5 ? 1 : -1;
+        heli.mesh.visible = true;
+        sfx.startRotor();
+      }
+      sfx.setRotor(0);
+      return;
+    }
+
+    heli.dist += 62 * dt;
+    heli.spin += dt * 26;
+    var p = track.pointAt(heli.dist);
+    var n = track.sideAt(heli.dist);
+    var t = track.tangentAt(heli.dist);
+    heli.mesh.position.copy(p).addScaledVector(n, heli.side * 16);
+    heli.mesh.position.y = p.y + 46;
+    heli.mesh.rotation.y = Math.atan2(t.x, t.z);
+    heli.mesh.rotation.z = Math.sin(heli.spin * 0.1) * 0.06 + heli.side * 0.08;
+    heli.mesh.userData.rotor.rotation.y = heli.spin;
+    heli.mesh.userData.tailRotor.rotation.x = heli.spin * 1.6;
+
+    var dist = f ? camera.position.distanceTo(heli.mesh.position) : 999;
+    sfx.setRotor(Math.max(0, 1 - dist / 220));
+
+    if (f && heli.dist > f.dist + 320) {
+      heli.active = false;
+      heli.mesh.visible = false;
+      sfx.setRotor(0);
+    }
+  }
+
+  /* Песчаная буря: видимость падает почти до нуля на 10–15 секунд. */
+  function updateStorm(dt) {
+    if (storm.active) {
+      storm.left -= dt;
+      if (storm.left <= 0) {
+        storm.active = false;
+        storm.timer = 45 + Math.random() * 45;
+        flash('Буря улеглась', '#e8cf9d');
+      }
+    } else if (!admin.noHazards) {
+      storm.timer -= dt;
+      if (storm.timer <= 0) {
+        storm.active = true;
+        storm.left = 10 + Math.random() * 5;
+        sfx.startWind();
+        flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
+      }
+    }
+
+    var target = storm.active ? 1 : 0;
+    storm.level += (target - storm.level) * Math.min(1, dt * 0.9);
+    if (storm.level < 0.002) storm.level = 0;
+
+    scene.fog.density = 0.0013 + storm.level * 0.0135;
+    scene.fog.color.setHex(0xcbb489).lerp(new THREE.Color(0xbd8f4a), storm.level);
+    renderer.setClearColor(new THREE.Color(0xbcd3e6).lerp(new THREE.Color(0xc79a52), storm.level));
+    if (sunLight) sunLight.intensity = 1.3 * (1 - 0.55 * storm.level);
+    sfx.setWind(storm.level);
+    storm.system.update(dt, storm.level, camera.position);
+  }
+
+  /* Лужи: заехал — занос. */
+  function checkPuddles(dt) {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished || r.jail > 0 || r.speed < 6) continue;
+      if (r.puddleCooldown > 0) { r.puddleCooldown -= dt; continue; }
+      for (var k = 0; k < puddles.length; k++) {
+        var p = puddles[k];
+        var along = Math.abs(track.norm(r.dist - p.dist + track.length / 2) - track.length / 2);
+        if (along > p.radius) continue;
+        if (Math.abs(r.lane - p.lane) > p.radius * 0.8) continue;
+        r.skid = (Math.random() < 0.5 ? -1 : 1) * (2.6 + r.speed * 0.09);
+        r.puddleCooldown = 2.2;
+        var d = camera.position.distanceTo(r.mesh.position);
+        sfx.splash(Math.max(0, 1 - d / 120));
+        for (var s = 0; s < 5; s++) {
+          var sp = r.mesh.position.clone();
+          sp.y += 0.4;
+          smoke.emit(sp, new THREE.Vector3((Math.random() - 0.5) * 6, 1.5 + Math.random() * 2,
+            (Math.random() - 0.5) * 6), 1.0, 0xbcd8e8);
+        }
+        if (r.isHuman) flash(r.name + ' влетел в лужу — занос!', '#7fd4ff');
+        break;
+      }
+    }
+  }
+
+  /* Столкновения со зверями и полицейской машиной. */
+  function checkHazardHits() {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished || r.jail > 0 || r.speed < 1) continue;
+
+      // полицейская машина: тюрьма на 30 секунд
+      for (var k = 0; k < police.length; k++) {
+        var c = police[k];
+        if (!c.active) continue;
+        var along = Math.abs(track.norm(r.dist - c.dist + track.length / 2) - track.length / 2);
+        if (along < 3.6 && Math.abs(r.lane - c.lane) < 2.2) {
+          jailRacer(r, 30, 'въехал в полицейскую машину');
+          break;
+        }
+      }
+      if (r.jail > 0) continue;
+
+      // верблюд: печка рассыпается, тюрьма до конца гонки
+      if (camel.active) {
+        var ac = Math.abs(track.norm(r.dist - camel.dist + track.length / 2) - track.length / 2);
+        if (ac < 3.4 && Math.abs(r.lane - camel.lane) < 2.6) {
+          wreckRacer(r);
+          continue;
+        }
+      }
+
+      // таракан: шлепок, потеря хода, таракан удирает
+      if (roach.active) {
+        var ar = Math.abs(track.norm(r.dist - roach.dist + track.length / 2) - track.length / 2);
+        if (ar < 3.2 && Math.abs(r.lane - roach.lane) < 2.4) {
+          r.speed *= 0.45;
+          r.skid = (Math.random() < 0.5 ? -1 : 1) * 2.2;
+          roach.speed = 9;
+          var d = camera.position.distanceTo(r.mesh.position);
+          sfx.splat(Math.max(0, 1 - d / 120));
+          if (r.isHuman) flash(r.name + ' задел лакукарачу!', '#c98b5a');
+        }
+      }
+    }
+  }
+
+  function jailRacer(r, seconds, reason) {
+    if (r.jail > 0 || r.dq || r.finished) return;
+    if (admin.invincible && r.isHuman) {
+      flash(r.name + ': ' + reason + ' — прощено (админ)', '#5dd6ff');
+      return;
+    }
+    r.jail = seconds;
+    r.jailReason = reason;
+    r.speed = 0;
+    r.throttle = false;
+    r.steer = 0;
+    r.skid = 0;
+    r.flying = false;
+    r.air = 0;
+    r.lane = (r.lane >= 0 ? 1 : -1) * (MAX_LANE - 0.4);
+    r.mesh.userData.fire.visible = false;
+    r.mesh.userData.fireGlow.visible = false;
+    if (!r.status) {
+      r.status = World.statusSprite();
+      r.status.position.set(0, 6.6, 0);
+      r.mesh.add(r.status);
+    }
+    r.status.visible = true;
+    sfx.siren(0.9, 2);
+    sfx.jailClang();
+    music.duck(1.4);
+    flash(r.name + ' ' + reason + ' — тюрьма на ' + Math.round(seconds) + ' с!', '#ff8a3d');
+  }
+
+  /* Врезался в верблюда: печь разлетается кирпичами и выбывает. */
+  function wreckRacer(r) {
+    if (r.dq || r.finished) return;
+    if (admin.invincible && r.isHuman) {
+      flash(r.name + ': сбил верблюда — прощено (админ)', '#5dd6ff');
+      return;
+    }
+    for (var i = 0; i < 22; i++) {
+      var p = r.mesh.position.clone();
+      p.y += 1 + Math.random() * 2.5;
+      smoke.emit(p, new THREE.Vector3((Math.random() - 0.5) * 12, 2 + Math.random() * 6,
+        (Math.random() - 0.5) * 12), 1.8, i % 3 ? 0xa8563c : 0x6a6a6a);
+    }
+    sfx.crash();
+    sfx.jailClang();
+    disqualify(r, 'врезался в верблюда — тюрьма до конца гонки');
+    r.mesh.visible = false;
   }
 
   /* ---------------- Бабушки на дороге ---------------- */
@@ -2625,7 +3767,7 @@
 
   /* Бабушки идут по зебре, когда для печек красный, и просто «где удобно». */
   /* Поставить бабушку в конкретное место трассы (нужно и админке). */
-  function spawnGrannyAt(dist) {
+  function spawnGrannyAt(dist, jaywalk) {
     var free = null;
     for (var i = 0; i < grannies.length; i++) if (!grannies[i].active) { free = grannies[i]; break; }
     if (!free) return null;
@@ -2639,6 +3781,9 @@
     free.whack = 0;
     free.whackCooldown = 0;
     free.knockTimer = 0;
+    free.caught = false;
+    free.jaywalk = !!jaywalk;
+    free.policeTimer = 3 + Math.random() * 4;
     free.mesh.visible = true;
     return free;
   }
@@ -2658,6 +3803,7 @@
 
     var onZebra = Math.random() < 0.65;
     var where;
+    var jaywalk = !onZebra;
     if (onZebra) {
       // ближайшая зебра, до которой ещё не доехали
       var best = null, bestGap = Infinity;
@@ -2671,7 +3817,18 @@
       where = lead + 110 + Math.random() * 90;
     }
 
-    spawnGrannyAt(where);
+    spawnGrannyAt(where, jaywalk);
+  }
+
+  /* Бабушка нарушает, если идёт не по зебре или когда для печек зелёный. */
+  function grannyViolating(g) {
+    if (g.jaywalk) return true;
+    var best = null, bestGap = Infinity;
+    for (var i = 0; i < intersections.length; i++) {
+      var gap = Math.abs(track.norm(g.dist - intersections[i].dist + track.length / 2) - track.length / 2);
+      if (gap < bestGap) { bestGap = gap; best = intersections[i]; }
+    }
+    return best && bestGap < 30 && best.state === 'green';
   }
 
   function updateGrannies(dt) {
@@ -2693,6 +3850,26 @@
 
       var target = racerNextTo(g);          // кто подъехал в упор
       g.walk += dt * 6;
+
+      if (g.caught) {
+        // ждёт полицию, руки вверх
+        g.mesh.userData.armR.rotation.z = -2.6;
+        g.mesh.userData.armL.rotation.z = 2.6;
+        var pc = track.pointAt(g.dist);
+        var pn = track.sideAt(g.dist);
+        g.mesh.position.copy(pc).addScaledVector(pn, g.lane);
+        g.mesh.position.y = pc.y;
+        continue;
+      }
+
+      // нарушение заметила полиция
+      if (!admin.noHazards && Math.abs(g.lane) < MAX_LANE && grannyViolating(g)) {
+        g.policeTimer -= dt;
+        if (g.policeTimer <= 0) {
+          g.policeTimer = 999;
+          if (Math.random() < 0.5) spawnPolice(g);
+        }
+      }
 
       if (g.angry > 0) {
         // только что сбили: стоит и потрясает тростью
@@ -2859,6 +4036,11 @@
         mesh: mesh,
         lane: (col === 0 ? -1 : 1) * (2.6 + row * 1.75),
         steer: 0,
+        skid: 0,           // занос после лужи, м/с поперёк
+        jail: 0,           // сколько ещё сидеть
+        jailReason: '',
+        status: null,
+        puddleCooldown: 0,
         air: 0,            // насколько печка сейчас оторвалась от дороги
         flying: false,
         flyY: 0,
@@ -2903,7 +4085,7 @@
     var drift = Math.atan2(r.steer * STEER_RATE * 0.6, Math.max(r.speed, 6));
     r.mesh.rotation.y = Math.atan2(t.x, t.z) - drift;
     r.mesh.rotation.x = -Math.atan(track.slopeAt(r.dist)) * (r.air > 0.1 ? 0.4 : 1);
-    r.mesh.rotation.z = -r.steer * 0.045 * Math.min(1, r.speed / 12);
+    r.mesh.rotation.z = -r.steer * 0.045 * Math.min(1, r.speed / 12) + (r.skid || 0) * 0.035;
   }
 
   /* ---------------- Светофоры ---------------- */
@@ -3099,6 +4281,24 @@
     if (r.dq) return;
     if (r.bumpCooldown > 0) r.bumpCooldown -= dt;
 
+    // сидит в тюрьме: стоит у обочины, пока не выйдет срок
+    if (r.jail > 0) {
+      r.jail = Math.max(0, r.jail - dt);
+      r.speed = 0;
+      r.throttle = false;
+      r.steer = 0;
+      if (r.status) r.status.userData.set('ТЮРЬМА ' + Math.ceil(r.jail) + ' с', '#ff8a3d');
+      if (r.jail === 0) {
+        if (r.status) r.status.visible = false;
+        r.mesh.userData.fire.visible = true;
+        r.mesh.userData.fireGlow.visible = true;
+        flash(r.name + ' вышел из тюрьмы', '#8ce99a');
+      }
+      placeRacer(r);
+      animateStove(r, dt);
+      return;
+    }
+
     if (r.finished) {
       // докатывается и останавливается
       r.throttle = false;
@@ -3152,7 +4352,15 @@
       // Руль: на малой скорости печка почти не слушается.
       // Внимание: track.sideAt() смотрит ВЛЕВО от движения, поэтому
       // «вправо» (steer = +1) — это уменьшение полосы.
-      r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * (r.air > 0.15 ? 0.3 : 1);
+      // В заносе после лужи и в полёте руль почти бесполезен.
+      var grip = (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1);
+      r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * grip;
+
+      if (r.skid !== 0) {
+        r.lane += r.skid * dt;
+        r.skid -= r.skid * Math.min(1, dt * 1.6);
+        if (Math.abs(r.skid) < 0.05) r.skid = 0;
+      }
       r.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, r.lane));
 
       if (onEdge && r.speed > 3) {
@@ -3218,11 +4426,13 @@
       var gap = o.dist - r.dist;
       if (gap > 0.5 && gap < bestGap && Math.abs(o.lane - r.lane) < 3.4) { bestGap = gap; best = o; }
     }
-    for (var k = 0; k < grannies.length; k++) {
-      var g = grannies[k];
-      if (!g.active) continue;
+    var others = grannies.concat(police, [camel, roach]);
+    for (var k = 0; k < others.length; k++) {
+      var g = others[k];
+      if (!g || !g.active) continue;
       var gg = track.norm(g.dist - r.dist);
-      if (gg < bestGap && Math.abs(g.lane - r.lane) < 3.2) { bestGap = gg; best = g; }
+      var width = g.isPolice ? 4.2 : (g.isCamel ? 4 : 3.4);
+      if (gg < bestGap && Math.abs(g.lane - r.lane) < width) { bestGap = gg; best = g; }
     }
     return best ? { obj: best, gap: bestGap } : null;
   }
@@ -3284,7 +4494,7 @@
     // бабушку объехать выходит не всегда — тогда тормозим,
     // но если уже почти встали, всё-таки крадёмся мимо
     var ob = obstacleAhead(r, 26);
-    if (ob && ob.obj.isGranny) {
+    if (ob && (ob.obj.isGranny || ob.obj.isPolice || ob.obj.isCamel || ob.obj.isRoach)) {
       var needG = (r.speed * r.speed) / (2 * BRAKE) + r.speed * r.ai.reaction + 4;
       var close = Math.abs(ob.obj.lane - r.lane) < 2.6;
       if (ob.gap < needG && close && r.speed > 3) return false;
@@ -3431,7 +4641,9 @@
     var rows = '';
     for (var i = 0; i < order.length; i++) {
       var r = order[i];
-      var status = r.finished ? 'финиш' : ('круг ' + Math.min(r.lap, totalLaps) + '/' + totalLaps);
+      var status = r.finished ? 'финиш'
+        : (r.jail > 0 ? ('тюрьма ' + Math.ceil(r.jail) + 'с')
+        : ('круг ' + Math.min(r.lap, totalLaps) + '/' + totalLaps));
       rows += '<div class="row' + (r.isHuman ? ' me' : '') + '">' +
         '<span class="pos">' + (i + 1) + '</span>' +
         '<span class="dot" style="background:#' + new THREE.Color(r.color).getHexString() + '"></span>' +
@@ -3477,6 +4689,11 @@
     ui.granny.style.opacity = granny ? '1' : '0';
     if (granny) ui.grannyDist.textContent = Math.round(granny.gap) + ' м';
 
+    // тюрьма и песчаная буря
+    ui.jail.style.opacity = f.jail > 0 ? '1' : '0';
+    if (f.jail > 0) ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' + f.jailReason;
+    ui.storm.style.opacity = storm.level > 0.25 ? '1' : '0';
+
     // состояние каждого игрока
     for (var h = 0; h < ui.pedals.length; h++) {
       var pr = racers[h];
@@ -3487,8 +4704,10 @@
       el.classList.toggle('out', pr.dq);
       var bar = el.querySelector('.steam i');
       if (bar) bar.style.width = Math.round(pr.steam) + '%';
-      el.querySelector('.pspeed').textContent = pr.dq ? 'снят' :
-        (pr.finished ? 'финиш' : Math.round(pr.speed * 3.6) + ' км/ч');
+      el.classList.toggle('jailed', pr.jail > 0);
+      el.querySelector('.pspeed').textContent = pr.dq ? 'снят'
+        : (pr.jail > 0 ? 'тюрьма ' + Math.ceil(pr.jail) + 'с'
+        : (pr.finished ? 'финиш' : Math.round(pr.speed * 3.6) + ' км/ч'));
     }
   }
 
@@ -3558,9 +4777,13 @@
       elapsed += dt;
       updateLights(dt);
       updateGrannies(dt);
+      updatePolice(dt);
+      updateAnimals(dt);
       for (var i = 0; i < racers.length; i++) updateRacer(racers[i], dt);
       resolveContacts();
       checkGrannyHits();
+      checkHazardHits();
+      checkPuddles(dt);
       for (var pi = 0; pi < racers.length; pi++) {
         if (!racers[pi].dq) placeRacer(racers[pi]);
       }
@@ -3573,6 +4796,7 @@
     }
 
     if (smoke) smoke.update(dt);
+    if (storm.system && state !== 'menu') { updateStorm(dt); updateHeli(dt); }
     var f = (state === 'menu') ? null : focusRacer();
     // подпись печки, за которой едет камера, только мешает — гасим её
     for (var n = 0; n < racers.length; n++) {
@@ -3707,6 +4931,7 @@
     createRacers(humanCount);
     randomizeLights();
     resetGrannies();
+    resetHazards();
     buildPedals(humanCount);
     touchThrottle = {};
     touchSteer = {};
@@ -3793,7 +5018,8 @@
       ['adm-invincible', 'invincible'],
       ['adm-steam', 'infiniteSteam'],
       ['adm-slowai', 'weakAI'],
-      ['adm-nogranny', 'noGrannies']
+      ['adm-nogranny', 'noGrannies'],
+      ['adm-nohazard', 'noHazards']
     ];
     checks.forEach(function (pair) {
       document.getElementById(pair[0]).addEventListener('change', function (e) {
@@ -3824,9 +5050,58 @@
     document.getElementById('adm-granny').addEventListener('click', function () {
       var f = focusRacer();
       if (!f) return;
-      spawnGrannyAt(f.dist + 70);
+      spawnGrannyAt(f.dist + 70, true);      // нарушительница, за ней приедет полиция
+    });
+    document.getElementById('adm-police').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f) return;
+      var g = spawnGrannyAt(f.dist + 55, true);
+      if (!g) return;
+      spawnPolice(g);
+      // ставим машину прямо в полосу печки — так админкой удобно проверять
+      for (var i = 0; i < police.length; i++) {
+        if (police[i].active && police[i].granny === g) {
+          police[i].dist = track.norm(f.dist + 55);
+          police[i].lane = f.lane;
+        }
+      }
     });
     document.getElementById('adm-kill').addEventListener('click', killBot);
+    document.getElementById('adm-storm').addEventListener('click', function () {
+      storm.active = true;
+      storm.left = 12;
+      sfx.startWind();
+      flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
+    });
+    document.getElementById('adm-heli').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f) return;
+      heli.active = true;
+      heli.dist = f.dist - 180;
+      heli.side = Math.random() < 0.5 ? 1 : -1;
+      heli.mesh.visible = true;
+      sfx.startRotor();
+    });
+    document.getElementById('adm-free').addEventListener('click', function () {
+      for (var i = 0; i < racers.length; i++) {
+        if (racers[i].jail > 0) {
+          racers[i].jail = 0;
+          if (racers[i].status) racers[i].status.visible = false;
+          racers[i].mesh.userData.fire.visible = true;
+          racers[i].mesh.userData.fireGlow.visible = true;
+        }
+      }
+      flash('Все на свободе', '#5dd6ff');
+    });
+    document.getElementById('adm-camel').addEventListener('click', function () {
+      var f = focusRacer();
+      spawnCrosser(camel, 1, 60, 90);
+      if (f && camel.active) {           // прямо по курсу, чтобы точно встретиться
+        camel.dist = track.norm(f.dist + 60);
+        camel.lane = f.lane;
+        camel.speed = 0.25;
+      }
+    });
     document.getElementById('adm-restart').addEventListener('click', function () {
       startRace(lastHumans, totalLaps);
     });
@@ -3859,6 +5134,9 @@
     ui.steamFill = document.getElementById('steam-fill');
     ui.granny = document.getElementById('granny-warn');
     ui.grannyDist = document.getElementById('granny-dist');
+    ui.jail = document.getElementById('jail-warn');
+    ui.jailText = document.getElementById('jail-text');
+    ui.storm = document.getElementById('storm-warn');
     ui.pedals = [];
 
     initRenderer();
@@ -3943,6 +5221,13 @@
         };
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
+      storm: { active: storm.active, level: +storm.level.toFixed(2) },
+      heli: heli ? heli.active : false,
+      police: police.filter(function (c) { return c.active; }).map(function (c) {
+        return { dist: Math.round(c.dist), lane: +c.lane.toFixed(1), left: +c.timer.toFixed(1) };
+      }),
+      camel: camel && camel.active ? { dist: Math.round(camel.dist), lane: +camel.lane.toFixed(1) } : null,
+      roach: roach && roach.active ? { dist: Math.round(roach.dist), lane: +roach.lane.toFixed(1) } : null,
       racers: racers.map(function (r) {
         return {
           name: r.name, human: r.isHuman, lap: r.lap, dq: r.dq, finished: r.finished,
@@ -3950,6 +5235,7 @@
           lane: +r.lane.toFixed(1), offsetRight: +offsetRight(r).toFixed(1),
           steam: Math.round(r.steam), boosting: r.boosting,
           reason: r.dqReason || null, rider: r.rider,
+          jail: +r.jail.toFixed(1), jailReason: r.jailReason || null, skid: +r.skid.toFixed(2),
           throttle: r.throttle,
           height: +track.heightAt(r.dist).toFixed(1),
           slope: +(track.slopeAt(r.dist) * 100).toFixed(1),

@@ -42,6 +42,12 @@
   var racers = [];
   var grannies = [];
   var granniesTimer = 0;
+  var police = [];
+  var camel = null;
+  var roach = null;
+  var puddles = [];
+  var heli = null;
+  var storm = { level: 0, active: false, timer: 45, left: 0, system: null };
   var sfx = new Sfx();
   var music = new Music(sfx);
   var engineNode = null;
@@ -65,6 +71,7 @@
     infiniteSteam: false,
     weakAI: false,
     noGrannies: false,
+    noHazards: false,
     lights: 'auto'
   };
   var sunLight = null;
@@ -153,6 +160,370 @@
     addStartLine();
     smoke = new World.SmokeSystem(scene, 300);
     createGrannies();
+    createHazards();
+  }
+
+  /* ---------------- Полиция, звери, лужи, буря ---------------- */
+
+  function createHazards() {
+    for (var i = 0; i < 2; i++) {
+      var mesh = World.buildPoliceCar();
+      scene.add(mesh);
+      police.push({ isPolice: true, mesh: mesh, active: false, dist: 0, lane: 0,
+        phase: 'parked', timer: 0, granny: null, blink: 0 });
+    }
+
+    var cm = World.buildCamel();
+    scene.add(cm);
+    camel = { isCamel: true, mesh: cm, active: false, dist: 0, lane: 0, dir: 1,
+      speed: 1, walk: 0, timer: 25 + Math.random() * 30 };
+
+    var rm = World.buildRoach();
+    scene.add(rm);
+    roach = { isRoach: true, mesh: rm, active: false, dist: 0, lane: 0, dir: 1,
+      speed: 5, walk: 0, timer: 20 + Math.random() * 25 };
+
+    var hm = World.buildHelicopter();
+    scene.add(hm);
+    heli = { mesh: hm, active: false, dist: 0, side: 1, timer: 30 + Math.random() * 40, spin: 0 };
+
+    storm.system = new World.SandStorm(scene, 900);
+
+    for (var k = 0; k < 9; k++) {
+      var pm = World.buildPuddle();
+      pm.visible = false;
+      scene.add(pm);
+      puddles.push({ mesh: pm, dist: 0, lane: 0, radius: 4 });
+    }
+  }
+
+  function resetHazards() {
+    for (var i = 0; i < police.length; i++) {
+      police[i].active = false;
+      police[i].mesh.visible = false;
+    }
+    camel.active = false; camel.mesh.visible = false; camel.timer = 30 + Math.random() * 30;
+    roach.active = false; roach.mesh.visible = false; roach.timer = 22 + Math.random() * 25;
+    heli.active = false; heli.mesh.visible = false; heli.timer = 25 + Math.random() * 35;
+    storm.active = false; storm.level = 0; storm.timer = 40 + Math.random() * 40; storm.left = 0;
+    sfx.setWind(0);
+    sfx.setRotor(0);
+
+    // лужи раскидываем заново на каждый заезд
+    for (var k = 0; k < puddles.length; k++) {
+      var p = puddles[k];
+      p.dist = track.length * (k + 0.35 + Math.random() * 0.4) / puddles.length;
+      p.lane = (Math.random() - 0.5) * 13;
+      p.radius = 3.4 + Math.random() * 2.6;
+      var pt = track.pointAt(p.dist);
+      var n = track.sideAt(p.dist);
+      var t = track.tangentAt(p.dist);
+      p.mesh.position.copy(pt).addScaledVector(n, p.lane);
+      p.mesh.position.y = pt.y + 0.035;
+      p.mesh.scale.set(p.radius * 2, p.radius * 1.5, 1);
+      p.mesh.rotation.set(-Math.PI / 2, 0, 0);
+      p.mesh.rotateZ(-Math.atan2(t.x, t.z));
+      p.mesh.visible = true;
+    }
+  }
+
+  /* Полиция приезжает к нарушительнице и перекрывает часть дороги. */
+  function spawnPolice(granny) {
+    var free = null;
+    for (var i = 0; i < police.length; i++) if (!police[i].active) { free = police[i]; break; }
+    if (!free) return;
+    for (var j = 0; j < police.length; j++) {
+      if (police[j].active && Math.abs(track.norm(police[j].dist - granny.dist)) < 160) return;
+    }
+    free.active = true;
+    free.dist = track.norm(granny.dist + 4);
+    free.lane = Math.max(-6.5, Math.min(6.5, granny.lane));
+    free.phase = 'parked';
+    free.timer = 13 + Math.random() * 5;
+    free.granny = granny;
+    free.blink = 0;
+    free.mesh.visible = true;
+    granny.caught = true;
+
+    var d = camera.position.distanceTo(free.mesh.position);
+    sfx.siren(Math.max(0, 1 - d / 260), 3);
+    if (d < 260) flash('Полиция забирает бабушку — объезжай машину!', '#5dd6ff');
+  }
+
+  function updatePolice(dt) {
+    for (var i = 0; i < police.length; i++) {
+      var c = police[i];
+      if (!c.active) continue;
+      c.blink += dt;
+      c.timer -= dt;
+      World.flashPolice(c.mesh, c.blink);
+
+      // бабушку увозят через несколько секунд
+      if (c.granny && c.timer < 8 && c.granny.active) {
+        c.granny.active = false;
+        c.granny.mesh.visible = false;
+        c.granny = null;
+      }
+      if (c.timer <= 0) {
+        c.active = false;
+        c.mesh.visible = false;
+        continue;
+      }
+
+      var p = track.pointAt(c.dist);
+      var n = track.sideAt(c.dist);
+      var t = track.tangentAt(c.dist);
+      c.mesh.position.copy(p).addScaledVector(n, c.lane);
+      c.mesh.position.y = p.y;
+      c.mesh.rotation.order = 'YXZ';
+      c.mesh.rotation.y = Math.atan2(t.x, t.z) + 0.35;
+      c.mesh.rotation.x = -Math.atan(track.slopeAt(c.dist));
+    }
+  }
+
+  /* Верблюд и таракан переходят дорогу так же, как бабушки. */
+  function spawnCrosser(obj, speed, aheadMin, aheadMax) {
+    var lead = -Infinity;
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (!r.dq && !r.finished && r.dist > lead) lead = r.dist;
+    }
+    if (lead === -Infinity) return;
+    obj.active = true;
+    obj.dist = track.norm(lead + aheadMin + Math.random() * (aheadMax - aheadMin));
+    obj.dir = Math.random() < 0.5 ? 1 : -1;
+    obj.lane = -obj.dir * (MAX_LANE + 5);
+    obj.speed = speed;
+    obj.walk = 0;
+    obj.mesh.visible = true;
+  }
+
+  function updateCrosser(obj, dt, legSwing) {
+    if (!obj.active) return;
+    obj.walk += dt * legSwing;
+    obj.lane += obj.dir * obj.speed * dt;
+    var p = track.pointAt(obj.dist);
+    var n = track.sideAt(obj.dist);
+    var t = track.tangentAt(obj.dist);
+    obj.mesh.position.copy(p).addScaledVector(n, obj.lane);
+    obj.mesh.position.y = p.y;
+    obj.mesh.rotation.y = Math.atan2(t.x, t.z) + obj.dir * Math.PI / 2;
+    var legs = obj.mesh.userData.legs;
+    for (var i = 0; i < legs.length; i++) {
+      legs[i].rotation.x = Math.sin(obj.walk + i * 1.7) * 0.5;
+    }
+    if (Math.abs(obj.lane) > MAX_LANE + 6 && obj.lane * obj.dir > 0) {
+      obj.active = false;
+      obj.mesh.visible = false;
+    }
+  }
+
+  function updateAnimals(dt) {
+    if (!admin.noHazards) {
+      camel.timer -= dt;
+      if (camel.timer <= 0 && !camel.active) {
+        camel.timer = 40 + Math.random() * 40;
+        spawnCrosser(camel, 0.8 + Math.random() * 0.5, 120, 220);
+        flash('Верблюд вышел на дорогу!', '#e0b070');
+      }
+      roach.timer -= dt;
+      if (roach.timer <= 0 && !roach.active) {
+        roach.timer = 32 + Math.random() * 35;
+        spawnCrosser(roach, 4.5 + Math.random() * 2, 110, 200);
+        flash('Лакукарача перебегает дорогу!', '#c98b5a');
+      }
+    }
+    updateCrosser(camel, dt, 3);
+    updateCrosser(roach, dt, 14);
+    // таракан ещё и виляет
+    if (roach.active) roach.mesh.rotation.z = Math.sin(roach.walk * 0.6) * 0.12;
+  }
+
+  /* Полицейский вертолёт проносится над трассой. */
+  function updateHeli(dt) {
+    var f = focusRacer();
+    if (!heli.active) {
+      heli.timer -= dt;
+      if (heli.timer <= 0 && f && !admin.noHazards) {
+        heli.timer = 45 + Math.random() * 45;
+        heli.active = true;
+        heli.dist = f.dist - 260;
+        heli.side = Math.random() < 0.5 ? 1 : -1;
+        heli.mesh.visible = true;
+        sfx.startRotor();
+      }
+      sfx.setRotor(0);
+      return;
+    }
+
+    heli.dist += 62 * dt;
+    heli.spin += dt * 26;
+    var p = track.pointAt(heli.dist);
+    var n = track.sideAt(heli.dist);
+    var t = track.tangentAt(heli.dist);
+    heli.mesh.position.copy(p).addScaledVector(n, heli.side * 16);
+    heli.mesh.position.y = p.y + 46;
+    heli.mesh.rotation.y = Math.atan2(t.x, t.z);
+    heli.mesh.rotation.z = Math.sin(heli.spin * 0.1) * 0.06 + heli.side * 0.08;
+    heli.mesh.userData.rotor.rotation.y = heli.spin;
+    heli.mesh.userData.tailRotor.rotation.x = heli.spin * 1.6;
+
+    var dist = f ? camera.position.distanceTo(heli.mesh.position) : 999;
+    sfx.setRotor(Math.max(0, 1 - dist / 220));
+
+    if (f && heli.dist > f.dist + 320) {
+      heli.active = false;
+      heli.mesh.visible = false;
+      sfx.setRotor(0);
+    }
+  }
+
+  /* Песчаная буря: видимость падает почти до нуля на 10–15 секунд. */
+  function updateStorm(dt) {
+    if (storm.active) {
+      storm.left -= dt;
+      if (storm.left <= 0) {
+        storm.active = false;
+        storm.timer = 45 + Math.random() * 45;
+        flash('Буря улеглась', '#e8cf9d');
+      }
+    } else if (!admin.noHazards) {
+      storm.timer -= dt;
+      if (storm.timer <= 0) {
+        storm.active = true;
+        storm.left = 10 + Math.random() * 5;
+        sfx.startWind();
+        flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
+      }
+    }
+
+    var target = storm.active ? 1 : 0;
+    storm.level += (target - storm.level) * Math.min(1, dt * 0.9);
+    if (storm.level < 0.002) storm.level = 0;
+
+    scene.fog.density = 0.0013 + storm.level * 0.0135;
+    scene.fog.color.setHex(0xcbb489).lerp(new THREE.Color(0xbd8f4a), storm.level);
+    renderer.setClearColor(new THREE.Color(0xbcd3e6).lerp(new THREE.Color(0xc79a52), storm.level));
+    if (sunLight) sunLight.intensity = 1.3 * (1 - 0.55 * storm.level);
+    sfx.setWind(storm.level);
+    storm.system.update(dt, storm.level, camera.position);
+  }
+
+  /* Лужи: заехал — занос. */
+  function checkPuddles(dt) {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished || r.jail > 0 || r.speed < 6) continue;
+      if (r.puddleCooldown > 0) { r.puddleCooldown -= dt; continue; }
+      for (var k = 0; k < puddles.length; k++) {
+        var p = puddles[k];
+        var along = Math.abs(track.norm(r.dist - p.dist + track.length / 2) - track.length / 2);
+        if (along > p.radius) continue;
+        if (Math.abs(r.lane - p.lane) > p.radius * 0.8) continue;
+        r.skid = (Math.random() < 0.5 ? -1 : 1) * (2.6 + r.speed * 0.09);
+        r.puddleCooldown = 2.2;
+        var d = camera.position.distanceTo(r.mesh.position);
+        sfx.splash(Math.max(0, 1 - d / 120));
+        for (var s = 0; s < 5; s++) {
+          var sp = r.mesh.position.clone();
+          sp.y += 0.4;
+          smoke.emit(sp, new THREE.Vector3((Math.random() - 0.5) * 6, 1.5 + Math.random() * 2,
+            (Math.random() - 0.5) * 6), 1.0, 0xbcd8e8);
+        }
+        if (r.isHuman) flash(r.name + ' влетел в лужу — занос!', '#7fd4ff');
+        break;
+      }
+    }
+  }
+
+  /* Столкновения со зверями и полицейской машиной. */
+  function checkHazardHits() {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished || r.jail > 0 || r.speed < 1) continue;
+
+      // полицейская машина: тюрьма на 30 секунд
+      for (var k = 0; k < police.length; k++) {
+        var c = police[k];
+        if (!c.active) continue;
+        var along = Math.abs(track.norm(r.dist - c.dist + track.length / 2) - track.length / 2);
+        if (along < 3.6 && Math.abs(r.lane - c.lane) < 2.2) {
+          jailRacer(r, 30, 'въехал в полицейскую машину');
+          break;
+        }
+      }
+      if (r.jail > 0) continue;
+
+      // верблюд: печка рассыпается, тюрьма до конца гонки
+      if (camel.active) {
+        var ac = Math.abs(track.norm(r.dist - camel.dist + track.length / 2) - track.length / 2);
+        if (ac < 3.4 && Math.abs(r.lane - camel.lane) < 2.6) {
+          wreckRacer(r);
+          continue;
+        }
+      }
+
+      // таракан: шлепок, потеря хода, таракан удирает
+      if (roach.active) {
+        var ar = Math.abs(track.norm(r.dist - roach.dist + track.length / 2) - track.length / 2);
+        if (ar < 3.2 && Math.abs(r.lane - roach.lane) < 2.4) {
+          r.speed *= 0.45;
+          r.skid = (Math.random() < 0.5 ? -1 : 1) * 2.2;
+          roach.speed = 9;
+          var d = camera.position.distanceTo(r.mesh.position);
+          sfx.splat(Math.max(0, 1 - d / 120));
+          if (r.isHuman) flash(r.name + ' задел лакукарачу!', '#c98b5a');
+        }
+      }
+    }
+  }
+
+  function jailRacer(r, seconds, reason) {
+    if (r.jail > 0 || r.dq || r.finished) return;
+    if (admin.invincible && r.isHuman) {
+      flash(r.name + ': ' + reason + ' — прощено (админ)', '#5dd6ff');
+      return;
+    }
+    r.jail = seconds;
+    r.jailReason = reason;
+    r.speed = 0;
+    r.throttle = false;
+    r.steer = 0;
+    r.skid = 0;
+    r.flying = false;
+    r.air = 0;
+    r.lane = (r.lane >= 0 ? 1 : -1) * (MAX_LANE - 0.4);
+    r.mesh.userData.fire.visible = false;
+    r.mesh.userData.fireGlow.visible = false;
+    if (!r.status) {
+      r.status = World.statusSprite();
+      r.status.position.set(0, 6.6, 0);
+      r.mesh.add(r.status);
+    }
+    r.status.visible = true;
+    sfx.siren(0.9, 2);
+    sfx.jailClang();
+    music.duck(1.4);
+    flash(r.name + ' ' + reason + ' — тюрьма на ' + Math.round(seconds) + ' с!', '#ff8a3d');
+  }
+
+  /* Врезался в верблюда: печь разлетается кирпичами и выбывает. */
+  function wreckRacer(r) {
+    if (r.dq || r.finished) return;
+    if (admin.invincible && r.isHuman) {
+      flash(r.name + ': сбил верблюда — прощено (админ)', '#5dd6ff');
+      return;
+    }
+    for (var i = 0; i < 22; i++) {
+      var p = r.mesh.position.clone();
+      p.y += 1 + Math.random() * 2.5;
+      smoke.emit(p, new THREE.Vector3((Math.random() - 0.5) * 12, 2 + Math.random() * 6,
+        (Math.random() - 0.5) * 12), 1.8, i % 3 ? 0xa8563c : 0x6a6a6a);
+    }
+    sfx.crash();
+    sfx.jailClang();
+    disqualify(r, 'врезался в верблюда — тюрьма до конца гонки');
+    r.mesh.visible = false;
   }
 
   /* ---------------- Бабушки на дороге ---------------- */
@@ -193,7 +564,7 @@
 
   /* Бабушки идут по зебре, когда для печек красный, и просто «где удобно». */
   /* Поставить бабушку в конкретное место трассы (нужно и админке). */
-  function spawnGrannyAt(dist) {
+  function spawnGrannyAt(dist, jaywalk) {
     var free = null;
     for (var i = 0; i < grannies.length; i++) if (!grannies[i].active) { free = grannies[i]; break; }
     if (!free) return null;
@@ -207,6 +578,9 @@
     free.whack = 0;
     free.whackCooldown = 0;
     free.knockTimer = 0;
+    free.caught = false;
+    free.jaywalk = !!jaywalk;
+    free.policeTimer = 3 + Math.random() * 4;
     free.mesh.visible = true;
     return free;
   }
@@ -226,6 +600,7 @@
 
     var onZebra = Math.random() < 0.65;
     var where;
+    var jaywalk = !onZebra;
     if (onZebra) {
       // ближайшая зебра, до которой ещё не доехали
       var best = null, bestGap = Infinity;
@@ -239,7 +614,18 @@
       where = lead + 110 + Math.random() * 90;
     }
 
-    spawnGrannyAt(where);
+    spawnGrannyAt(where, jaywalk);
+  }
+
+  /* Бабушка нарушает, если идёт не по зебре или когда для печек зелёный. */
+  function grannyViolating(g) {
+    if (g.jaywalk) return true;
+    var best = null, bestGap = Infinity;
+    for (var i = 0; i < intersections.length; i++) {
+      var gap = Math.abs(track.norm(g.dist - intersections[i].dist + track.length / 2) - track.length / 2);
+      if (gap < bestGap) { bestGap = gap; best = intersections[i]; }
+    }
+    return best && bestGap < 30 && best.state === 'green';
   }
 
   function updateGrannies(dt) {
@@ -261,6 +647,26 @@
 
       var target = racerNextTo(g);          // кто подъехал в упор
       g.walk += dt * 6;
+
+      if (g.caught) {
+        // ждёт полицию, руки вверх
+        g.mesh.userData.armR.rotation.z = -2.6;
+        g.mesh.userData.armL.rotation.z = 2.6;
+        var pc = track.pointAt(g.dist);
+        var pn = track.sideAt(g.dist);
+        g.mesh.position.copy(pc).addScaledVector(pn, g.lane);
+        g.mesh.position.y = pc.y;
+        continue;
+      }
+
+      // нарушение заметила полиция
+      if (!admin.noHazards && Math.abs(g.lane) < MAX_LANE && grannyViolating(g)) {
+        g.policeTimer -= dt;
+        if (g.policeTimer <= 0) {
+          g.policeTimer = 999;
+          if (Math.random() < 0.5) spawnPolice(g);
+        }
+      }
 
       if (g.angry > 0) {
         // только что сбили: стоит и потрясает тростью
@@ -427,6 +833,11 @@
         mesh: mesh,
         lane: (col === 0 ? -1 : 1) * (2.6 + row * 1.75),
         steer: 0,
+        skid: 0,           // занос после лужи, м/с поперёк
+        jail: 0,           // сколько ещё сидеть
+        jailReason: '',
+        status: null,
+        puddleCooldown: 0,
         air: 0,            // насколько печка сейчас оторвалась от дороги
         flying: false,
         flyY: 0,
@@ -471,7 +882,7 @@
     var drift = Math.atan2(r.steer * STEER_RATE * 0.6, Math.max(r.speed, 6));
     r.mesh.rotation.y = Math.atan2(t.x, t.z) - drift;
     r.mesh.rotation.x = -Math.atan(track.slopeAt(r.dist)) * (r.air > 0.1 ? 0.4 : 1);
-    r.mesh.rotation.z = -r.steer * 0.045 * Math.min(1, r.speed / 12);
+    r.mesh.rotation.z = -r.steer * 0.045 * Math.min(1, r.speed / 12) + (r.skid || 0) * 0.035;
   }
 
   /* ---------------- Светофоры ---------------- */
@@ -667,6 +1078,24 @@
     if (r.dq) return;
     if (r.bumpCooldown > 0) r.bumpCooldown -= dt;
 
+    // сидит в тюрьме: стоит у обочины, пока не выйдет срок
+    if (r.jail > 0) {
+      r.jail = Math.max(0, r.jail - dt);
+      r.speed = 0;
+      r.throttle = false;
+      r.steer = 0;
+      if (r.status) r.status.userData.set('ТЮРЬМА ' + Math.ceil(r.jail) + ' с', '#ff8a3d');
+      if (r.jail === 0) {
+        if (r.status) r.status.visible = false;
+        r.mesh.userData.fire.visible = true;
+        r.mesh.userData.fireGlow.visible = true;
+        flash(r.name + ' вышел из тюрьмы', '#8ce99a');
+      }
+      placeRacer(r);
+      animateStove(r, dt);
+      return;
+    }
+
     if (r.finished) {
       // докатывается и останавливается
       r.throttle = false;
@@ -720,7 +1149,15 @@
       // Руль: на малой скорости печка почти не слушается.
       // Внимание: track.sideAt() смотрит ВЛЕВО от движения, поэтому
       // «вправо» (steer = +1) — это уменьшение полосы.
-      r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * (r.air > 0.15 ? 0.3 : 1);
+      // В заносе после лужи и в полёте руль почти бесполезен.
+      var grip = (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1);
+      r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * grip;
+
+      if (r.skid !== 0) {
+        r.lane += r.skid * dt;
+        r.skid -= r.skid * Math.min(1, dt * 1.6);
+        if (Math.abs(r.skid) < 0.05) r.skid = 0;
+      }
       r.lane = Math.max(-MAX_LANE, Math.min(MAX_LANE, r.lane));
 
       if (onEdge && r.speed > 3) {
@@ -786,11 +1223,13 @@
       var gap = o.dist - r.dist;
       if (gap > 0.5 && gap < bestGap && Math.abs(o.lane - r.lane) < 3.4) { bestGap = gap; best = o; }
     }
-    for (var k = 0; k < grannies.length; k++) {
-      var g = grannies[k];
-      if (!g.active) continue;
+    var others = grannies.concat(police, [camel, roach]);
+    for (var k = 0; k < others.length; k++) {
+      var g = others[k];
+      if (!g || !g.active) continue;
       var gg = track.norm(g.dist - r.dist);
-      if (gg < bestGap && Math.abs(g.lane - r.lane) < 3.2) { bestGap = gg; best = g; }
+      var width = g.isPolice ? 4.2 : (g.isCamel ? 4 : 3.4);
+      if (gg < bestGap && Math.abs(g.lane - r.lane) < width) { bestGap = gg; best = g; }
     }
     return best ? { obj: best, gap: bestGap } : null;
   }
@@ -852,7 +1291,7 @@
     // бабушку объехать выходит не всегда — тогда тормозим,
     // но если уже почти встали, всё-таки крадёмся мимо
     var ob = obstacleAhead(r, 26);
-    if (ob && ob.obj.isGranny) {
+    if (ob && (ob.obj.isGranny || ob.obj.isPolice || ob.obj.isCamel || ob.obj.isRoach)) {
       var needG = (r.speed * r.speed) / (2 * BRAKE) + r.speed * r.ai.reaction + 4;
       var close = Math.abs(ob.obj.lane - r.lane) < 2.6;
       if (ob.gap < needG && close && r.speed > 3) return false;
@@ -999,7 +1438,9 @@
     var rows = '';
     for (var i = 0; i < order.length; i++) {
       var r = order[i];
-      var status = r.finished ? 'финиш' : ('круг ' + Math.min(r.lap, totalLaps) + '/' + totalLaps);
+      var status = r.finished ? 'финиш'
+        : (r.jail > 0 ? ('тюрьма ' + Math.ceil(r.jail) + 'с')
+        : ('круг ' + Math.min(r.lap, totalLaps) + '/' + totalLaps));
       rows += '<div class="row' + (r.isHuman ? ' me' : '') + '">' +
         '<span class="pos">' + (i + 1) + '</span>' +
         '<span class="dot" style="background:#' + new THREE.Color(r.color).getHexString() + '"></span>' +
@@ -1045,6 +1486,11 @@
     ui.granny.style.opacity = granny ? '1' : '0';
     if (granny) ui.grannyDist.textContent = Math.round(granny.gap) + ' м';
 
+    // тюрьма и песчаная буря
+    ui.jail.style.opacity = f.jail > 0 ? '1' : '0';
+    if (f.jail > 0) ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' + f.jailReason;
+    ui.storm.style.opacity = storm.level > 0.25 ? '1' : '0';
+
     // состояние каждого игрока
     for (var h = 0; h < ui.pedals.length; h++) {
       var pr = racers[h];
@@ -1055,8 +1501,10 @@
       el.classList.toggle('out', pr.dq);
       var bar = el.querySelector('.steam i');
       if (bar) bar.style.width = Math.round(pr.steam) + '%';
-      el.querySelector('.pspeed').textContent = pr.dq ? 'снят' :
-        (pr.finished ? 'финиш' : Math.round(pr.speed * 3.6) + ' км/ч');
+      el.classList.toggle('jailed', pr.jail > 0);
+      el.querySelector('.pspeed').textContent = pr.dq ? 'снят'
+        : (pr.jail > 0 ? 'тюрьма ' + Math.ceil(pr.jail) + 'с'
+        : (pr.finished ? 'финиш' : Math.round(pr.speed * 3.6) + ' км/ч'));
     }
   }
 
@@ -1126,9 +1574,13 @@
       elapsed += dt;
       updateLights(dt);
       updateGrannies(dt);
+      updatePolice(dt);
+      updateAnimals(dt);
       for (var i = 0; i < racers.length; i++) updateRacer(racers[i], dt);
       resolveContacts();
       checkGrannyHits();
+      checkHazardHits();
+      checkPuddles(dt);
       for (var pi = 0; pi < racers.length; pi++) {
         if (!racers[pi].dq) placeRacer(racers[pi]);
       }
@@ -1141,6 +1593,7 @@
     }
 
     if (smoke) smoke.update(dt);
+    if (storm.system && state !== 'menu') { updateStorm(dt); updateHeli(dt); }
     var f = (state === 'menu') ? null : focusRacer();
     // подпись печки, за которой едет камера, только мешает — гасим её
     for (var n = 0; n < racers.length; n++) {
@@ -1275,6 +1728,7 @@
     createRacers(humanCount);
     randomizeLights();
     resetGrannies();
+    resetHazards();
     buildPedals(humanCount);
     touchThrottle = {};
     touchSteer = {};
@@ -1361,7 +1815,8 @@
       ['adm-invincible', 'invincible'],
       ['adm-steam', 'infiniteSteam'],
       ['adm-slowai', 'weakAI'],
-      ['adm-nogranny', 'noGrannies']
+      ['adm-nogranny', 'noGrannies'],
+      ['adm-nohazard', 'noHazards']
     ];
     checks.forEach(function (pair) {
       document.getElementById(pair[0]).addEventListener('change', function (e) {
@@ -1392,9 +1847,58 @@
     document.getElementById('adm-granny').addEventListener('click', function () {
       var f = focusRacer();
       if (!f) return;
-      spawnGrannyAt(f.dist + 70);
+      spawnGrannyAt(f.dist + 70, true);      // нарушительница, за ней приедет полиция
+    });
+    document.getElementById('adm-police').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f) return;
+      var g = spawnGrannyAt(f.dist + 55, true);
+      if (!g) return;
+      spawnPolice(g);
+      // ставим машину прямо в полосу печки — так админкой удобно проверять
+      for (var i = 0; i < police.length; i++) {
+        if (police[i].active && police[i].granny === g) {
+          police[i].dist = track.norm(f.dist + 55);
+          police[i].lane = f.lane;
+        }
+      }
     });
     document.getElementById('adm-kill').addEventListener('click', killBot);
+    document.getElementById('adm-storm').addEventListener('click', function () {
+      storm.active = true;
+      storm.left = 12;
+      sfx.startWind();
+      flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
+    });
+    document.getElementById('adm-heli').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f) return;
+      heli.active = true;
+      heli.dist = f.dist - 180;
+      heli.side = Math.random() < 0.5 ? 1 : -1;
+      heli.mesh.visible = true;
+      sfx.startRotor();
+    });
+    document.getElementById('adm-free').addEventListener('click', function () {
+      for (var i = 0; i < racers.length; i++) {
+        if (racers[i].jail > 0) {
+          racers[i].jail = 0;
+          if (racers[i].status) racers[i].status.visible = false;
+          racers[i].mesh.userData.fire.visible = true;
+          racers[i].mesh.userData.fireGlow.visible = true;
+        }
+      }
+      flash('Все на свободе', '#5dd6ff');
+    });
+    document.getElementById('adm-camel').addEventListener('click', function () {
+      var f = focusRacer();
+      spawnCrosser(camel, 1, 60, 90);
+      if (f && camel.active) {           // прямо по курсу, чтобы точно встретиться
+        camel.dist = track.norm(f.dist + 60);
+        camel.lane = f.lane;
+        camel.speed = 0.25;
+      }
+    });
     document.getElementById('adm-restart').addEventListener('click', function () {
       startRace(lastHumans, totalLaps);
     });
@@ -1427,6 +1931,9 @@
     ui.steamFill = document.getElementById('steam-fill');
     ui.granny = document.getElementById('granny-warn');
     ui.grannyDist = document.getElementById('granny-dist');
+    ui.jail = document.getElementById('jail-warn');
+    ui.jailText = document.getElementById('jail-text');
+    ui.storm = document.getElementById('storm-warn');
     ui.pedals = [];
 
     initRenderer();
@@ -1511,6 +2018,13 @@
         };
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
+      storm: { active: storm.active, level: +storm.level.toFixed(2) },
+      heli: heli ? heli.active : false,
+      police: police.filter(function (c) { return c.active; }).map(function (c) {
+        return { dist: Math.round(c.dist), lane: +c.lane.toFixed(1), left: +c.timer.toFixed(1) };
+      }),
+      camel: camel && camel.active ? { dist: Math.round(camel.dist), lane: +camel.lane.toFixed(1) } : null,
+      roach: roach && roach.active ? { dist: Math.round(roach.dist), lane: +roach.lane.toFixed(1) } : null,
       racers: racers.map(function (r) {
         return {
           name: r.name, human: r.isHuman, lap: r.lap, dq: r.dq, finished: r.finished,
@@ -1518,6 +2032,7 @@
           lane: +r.lane.toFixed(1), offsetRight: +offsetRight(r).toFixed(1),
           steam: Math.round(r.steam), boosting: r.boosting,
           reason: r.dqReason || null, rider: r.rider,
+          jail: +r.jail.toFixed(1), jailReason: r.jailReason || null, skid: +r.skid.toFixed(2),
           throttle: r.throttle,
           height: +track.heightAt(r.dist).toFixed(1),
           slope: +(track.slopeAt(r.dist) * 100).toFixed(1),
