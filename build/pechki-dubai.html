@@ -1219,10 +1219,10 @@
 
   World.sandTexture = function () {
     return canvasTexture(256, 256, function (g, w, h) {
-      g.fillStyle = '#e2c893';
+      g.fillStyle = '#d9bd88';
       g.fillRect(0, 0, w, h);
       for (var i = 0; i < 8000; i++) {
-        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,240,205,0.35)' : 'rgba(180,150,100,0.28)';
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,238,198,0.3)' : 'rgba(158,128,84,0.3)';
         g.fillRect(Math.random() * w, Math.random() * h, 1.6, 1.6);
       }
       for (var k = 0; k < 40; k++) {
@@ -1285,34 +1285,231 @@
     }, 2, 1);
   };
 
-  World.windowsTexture = function () {
-    return canvasTexture(128, 256, function (g, w, h) {
-      var base = ['#6f7f92', '#5d6b7d', '#7d8c9c', '#8796a4'][Math.floor(Math.random() * 4)];
-      g.fillStyle = base;
-      g.fillRect(0, 0, w, h);
-      var cw = 16, ch = 20;
-      for (var y = 6; y < h - 6; y += ch) {
-        for (var x = 6; x < w - 6; x += cw) {
-          var lit = Math.random();
-          if (lit > 0.74) g.fillStyle = 'rgba(255,232,170,0.95)';
-          else if (lit > 0.45) g.fillStyle = 'rgba(150,200,225,0.75)';
-          else g.fillStyle = 'rgba(40,58,74,0.85)';
-          g.fillRect(x, y, cw - 5, ch - 8);
+  /* ---------- Фасады небоскрёбов ----------
+     Четыре стиля: зеркальное стекло, дубайский камень, белые панели и
+     полосатый. В текстуру запечены межэтажные плиты, простенки, разный свет
+     в окнах и потёки — вблизи фасад перестаёт быть однотонной сеткой. */
+
+  function noiseOverlay(g, w, h, times, light, dark) {
+    for (var i = 0; i < times; i++) {
+      g.fillStyle = Math.random() > 0.5 ? light : dark;
+      g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+    }
+  }
+
+  /* Потёки и грязь сверху вниз. */
+  function grime(g, w, h, alpha) {
+    for (var i = 0; i < 26; i++) {
+      var x = Math.random() * w;
+      var len = h * (0.15 + Math.random() * 0.5);
+      var grd = g.createLinearGradient(x, 0, x, len);
+      grd.addColorStop(0, 'rgba(40,36,30,' + alpha + ')');
+      grd.addColorStop(1, 'rgba(40,36,30,0)');
+      g.fillStyle = grd;
+      g.fillRect(x, Math.random() * h * 0.4, 1 + Math.random() * 3, len);
+    }
+  }
+
+  World.facadeTexture = function (style) {
+    return canvasTexture(256, 512, function (g, w, h) {
+      var cols = 8, rows = 16;
+      var cw = w / cols, ch = h / rows;
+
+      if (style === 'sand') {
+        // дубайский камень: тёплые панели с утопленными окнами
+        g.fillStyle = '#d8c1a0';
+        g.fillRect(0, 0, w, h);
+        noiseOverlay(g, w, h, 2600, 'rgba(255,247,230,0.35)', 'rgba(150,124,92,0.25)');
+        for (var r = 0; r < rows; r++) {
+          for (var c = 0; c < cols; c++) {
+            var x = c * cw, y = r * ch;
+            // ниша
+            g.fillStyle = 'rgba(120,98,70,0.55)';
+            g.fillRect(x + 5, y + 5, cw - 10, ch - 11);
+            var lit = Math.random();
+            g.fillStyle = lit > 0.78 ? '#ffd9a0' : (lit > 0.5 ? '#7d9aa8' : '#4a5b66');
+            g.fillRect(x + 7, y + 7, cw - 14, ch - 15);
+            // козырёк над окном ловит солнце
+            g.fillStyle = 'rgba(255,248,232,0.75)';
+            g.fillRect(x + 4, y + 3, cw - 8, 2);
+          }
+          // межэтажная плита
+          g.fillStyle = 'rgba(238,226,206,0.9)';
+          g.fillRect(0, r * ch + ch - 4, w, 4);
         }
+        // резной поясок раз в четыре этажа
+        for (var b = 0; b < rows; b += 4) {
+          g.fillStyle = 'rgba(190,163,124,0.8)';
+          g.fillRect(0, b * ch - 3, w, 6);
+          g.fillStyle = 'rgba(255,250,238,0.5)';
+          for (var xx = 3; xx < w; xx += 9) g.fillRect(xx, b * ch - 2, 4, 4);
+        }
+        grime(g, w, h, 0.1);
+
+      } else if (style === 'white') {
+        // белые панели с ленточным остеклением
+        g.fillStyle = '#e9ebee';
+        g.fillRect(0, 0, w, h);
+        noiseOverlay(g, w, h, 1800, 'rgba(255,255,255,0.5)', 'rgba(160,168,178,0.22)');
+        for (var r2 = 0; r2 < rows; r2++) {
+          var y2 = r2 * ch;
+          var band = g.createLinearGradient(0, y2 + 4, 0, y2 + ch - 6);
+          band.addColorStop(0, '#33465a');
+          band.addColorStop(1, '#5c7c93');
+          g.fillStyle = band;
+          g.fillRect(0, y2 + 4, w, ch - 10);
+          // подсвеченные секции
+          for (var c2 = 0; c2 < cols; c2++) {
+            if (Math.random() > 0.72) {
+              g.fillStyle = 'rgba(255,222,168,0.9)';
+              g.fillRect(c2 * cw + 2, y2 + 6, cw - 5, ch - 14);
+            }
+            g.fillStyle = 'rgba(220,226,232,0.85)';
+            g.fillRect(c2 * cw, y2 + 4, 2, ch - 10);      // простенок
+          }
+          g.fillStyle = 'rgba(246,248,250,0.95)';
+          g.fillRect(0, y2 + ch - 6, w, 6);                // парапет балкона
+        }
+        grime(g, w, h, 0.07);
+
+      } else if (style === 'stripe') {
+        // чередование тёмного стекла и светлого камня
+        g.fillStyle = '#c9ccd2';
+        g.fillRect(0, 0, w, h);
+        for (var r3 = 0; r3 < rows; r3++) {
+          var y3 = r3 * ch;
+          if (r3 % 2 === 0) {
+            var gl = g.createLinearGradient(0, y3, 0, y3 + ch);
+            gl.addColorStop(0, '#2b3d4f');
+            gl.addColorStop(1, '#46647b');
+            g.fillStyle = gl;
+            g.fillRect(0, y3 + 2, w, ch - 4);
+            for (var c3 = 0; c3 < cols; c3++) {
+              if (Math.random() > 0.8) {
+                g.fillStyle = 'rgba(255,226,175,0.85)';
+                g.fillRect(c3 * cw + 3, y3 + 5, cw - 7, ch - 12);
+              }
+            }
+          } else {
+            g.fillStyle = '#dfe2e6';
+            g.fillRect(0, y3 + 2, w, ch - 4);
+            noiseOverlay(g, w, ch, 120, 'rgba(255,255,255,0.5)', 'rgba(150,155,165,0.25)');
+          }
+          g.fillStyle = 'rgba(120,128,138,0.5)';
+          g.fillRect(0, y3, w, 2);
+        }
+        grime(g, w, h, 0.09);
+
+      } else {
+        // зеркальное стекло: небо сверху, город снизу
+        var base = g.createLinearGradient(0, 0, 0, h);
+        base.addColorStop(0, '#8fb6d6');
+        base.addColorStop(0.45, '#5f87a8');
+        base.addColorStop(1, '#33506b');
+        g.fillStyle = base;
+        g.fillRect(0, 0, w, h);
+        for (var r4 = 0; r4 < rows; r4++) {
+          for (var c4 = 0; c4 < cols; c4++) {
+            var x4 = c4 * cw, y4 = r4 * ch;
+            var t = Math.random();
+            if (t > 0.86) g.fillStyle = 'rgba(255,226,170,0.92)';        // горит свет
+            else if (t > 0.66) g.fillStyle = 'rgba(196,224,244,0.5)';     // блик неба
+            else if (t > 0.4) g.fillStyle = 'rgba(30,52,74,0.35)';
+            else g.fillStyle = 'rgba(12,26,42,0.25)';
+            g.fillRect(x4 + 2, y4 + 3, cw - 4, ch - 8);
+          }
+          g.fillStyle = 'rgba(190,206,220,0.55)';
+          g.fillRect(0, r4 * ch + ch - 5, w, 3);                          // плита
+        }
+        for (var c5 = 0; c5 <= cols; c5++) {
+          g.fillStyle = 'rgba(206,220,232,0.4)';
+          g.fillRect(c5 * cw - 1, 0, 2, h);                               // ребро
+        }
+        grime(g, w, h, 0.08);
       }
-    }, 1, 1);
+
+      // затемнение к низу: у земли фасад всегда темнее
+      var shade = g.createLinearGradient(0, h * 0.75, 0, h);
+      shade.addColorStop(0, 'rgba(20,18,16,0)');
+      shade.addColorStop(1, 'rgba(20,18,16,0.28)');
+      g.fillStyle = shade;
+      g.fillRect(0, h * 0.75, w, h * 0.25);
+    });
   };
 
+  /* Старое имя оставлено: им пользуется башня. */
+  World.windowsTexture = function () {
+    return World.facadeTexture('glass');
+  };
+
+  /* Небо панорамой: зенит, дымка у горизонта, солнце с ореолом и перистые
+     облака. Солнце нарисовано там же, откуда светит направленный свет. */
+  World.SUN_UV = { u: 0.895, v: 0.227 };
+  World.SUN_DIR = new THREE.Vector3(-0.52, 0.755, -0.41);
+
   World.skyTexture = function () {
-    return canvasTexture(16, 256, function (g, w, h) {
+    return canvasTexture(1024, 512, function (g, w, h) {
       var grd = g.createLinearGradient(0, 0, 0, h);
-      grd.addColorStop(0.00, '#1f5ba8');
-      grd.addColorStop(0.35, '#79aede');
-      grd.addColorStop(0.64, '#cfd9dd');
-      grd.addColorStop(0.84, '#eed6ad');
-      grd.addColorStop(1.00, '#e3c089');
+      grd.addColorStop(0.00, '#0b3372');
+      grd.addColorStop(0.18, '#245fa8');
+      grd.addColorStop(0.36, '#4a8cc9');
+      grd.addColorStop(0.52, '#84badb');
+      grd.addColorStop(0.66, '#c2d3d3');
+      grd.addColorStop(0.78, '#e0caa0');
+      grd.addColorStop(0.90, '#dcb379');
+      grd.addColorStop(1.00, '#c4945c');
       g.fillStyle = grd;
       g.fillRect(0, 0, w, h);
+
+      // перистые облака: вытянутые мазки на нескольких высотах
+      for (var i = 0; i < 90; i++) {
+        var cy = h * (0.16 + Math.random() * 0.36);
+        var cx = Math.random() * w;
+        var len = 60 + Math.random() * 320;
+        var thick = 3 + Math.random() * 12;
+        var alpha = 0.05 + Math.random() * 0.16;
+        var cl = g.createLinearGradient(cx - len / 2, cy, cx + len / 2, cy);
+        cl.addColorStop(0, 'rgba(255,255,255,0)');
+        cl.addColorStop(0.5, 'rgba(255,255,255,' + alpha + ')');
+        cl.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = cl;
+        g.beginPath();
+        g.ellipse(cx, cy, len / 2, thick, (Math.random() - 0.5) * 0.12, 0, Math.PI * 2);
+        g.fill();
+      }
+
+      // пыльная дымка над горизонтом
+      var haze = g.createLinearGradient(0, h * 0.58, 0, h * 0.92);
+      haze.addColorStop(0, 'rgba(226,206,170,0)');
+      haze.addColorStop(0.6, 'rgba(226,206,170,0.24)');
+      haze.addColorStop(1, 'rgba(214,182,133,0.42)');
+      g.fillStyle = haze;
+      g.fillRect(0, h * 0.58, w, h * 0.34);
+
+      // солнце с широким ореолом
+      var sx = w * World.SUN_UV.u, sy = h * World.SUN_UV.v;
+      var halo = g.createRadialGradient(sx, sy, 4, sx, sy, 260);
+      halo.addColorStop(0, 'rgba(255,252,232,0.95)');
+      halo.addColorStop(0.06, 'rgba(255,244,206,0.75)');
+      halo.addColorStop(0.25, 'rgba(255,232,180,0.28)');
+      halo.addColorStop(1, 'rgba(255,226,170,0)');
+      g.fillStyle = halo;
+      g.fillRect(sx - 280, sy - 280, 560, 560);
+      g.fillStyle = 'rgba(255,255,248,1)';
+      g.beginPath(); g.arc(sx, sy, 16, 0, Math.PI * 2); g.fill();
+
+      // редкие кучевые ближе к горизонту
+      for (var k = 0; k < 16; k++) {
+        var bx = Math.random() * w;
+        var by = h * (0.5 + Math.random() * 0.12);
+        var r = 18 + Math.random() * 34;
+        g.fillStyle = 'rgba(255,255,255,0.13)';
+        for (var b = 0; b < 5; b++) {
+          g.beginPath();
+          g.arc(bx + (b - 2) * r * 0.55, by + Math.sin(b) * r * 0.18, r * (0.5 + Math.random() * 0.5), 0, Math.PI * 2);
+          g.fill();
+        }
+      }
     });
   };
 
@@ -1548,7 +1745,7 @@
   };
 
   World.shoulderMesh = function (track) {
-    var mat = new THREE.MeshLambertMaterial({ color: 0xcbb183 });
+    var mat = new THREE.MeshLambertMaterial({ color: 0xbda574 });
     return ribbon(track, track.width / 2 + 5, 0.008, mat, 500);
   };
 
@@ -1579,7 +1776,7 @@
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0xd6bb89 }));
+    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0xc7ab7b }));
   };
 
   /* Насколько далеко от осевой начинается ровный песок в этом месте. */
@@ -1746,20 +1943,22 @@
     sand.position.y = -0.05;
     group.add(sand);
 
-    // небо
+    // небо: панорама на сфере, её же подкрашиваем в бурю
     var sky = new THREE.Mesh(
-      new THREE.SphereGeometry(1800, 24, 16),
-      new THREE.MeshBasicMaterial({ map: World.skyTexture(), side: THREE.BackSide, depthWrite: false })
+      new THREE.SphereGeometry(1800, 32, 20),
+      new THREE.MeshBasicMaterial({ map: World.skyTexture(), side: THREE.BackSide,
+        depthWrite: false, fog: false })
     );
     group.add(sky);
+    World.skyMesh = sky;
 
-    // солнце
+    // солнце светится там же, куда смотрит направленный свет
     var sun = new THREE.Sprite(new THREE.SpriteMaterial({
       map: World.glowTexture(255, 246, 214), transparent: true,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
-    sun.scale.set(420, 420, 1);
-    sun.position.set(-900, 320, -1200);
+    sun.scale.set(300, 300, 1);
+    sun.position.copy(World.SUN_DIR).multiplyScalar(1400);
     group.add(sun);
 
     function distanceToRoad(x, z) {
@@ -1792,13 +1991,19 @@
       var fin0 = track.pointAt(0), fs0 = track.sideAt(0);
       var bjx = fin0.x + fs0.x * -82, bjz = fin0.z + fs0.z * -82;
       if ((x - bjx) * (x - bjx) + (z - bjz) * (z - bjz) < 105 * 105) continue;   // площадь башни
+      var pdd = track.length * 0.52;
+      var ppp = track.pointAt(pdd), pnn = track.sideAt(pdd);
+      var plx = ppp.x + pnn.x * 105, plz = ppp.z + pnn.z * 105;
+      if ((x - plx) * (x - plx) + (z - plz) * (z - plz) < 95 * 95) continue;      // двор дворца
 
       var h = 26 + Math.random() * Math.random() * 190 + (near < 90 ? 0 : 30);
       var bw = 12 + Math.random() * 24;
       var bd = 12 + Math.random() * 24;
 
       var geo = new THREE.BoxGeometry(bw, h, bd);
-      World.scaleUV(geo, Math.max(1, Math.round(bw / 8)), Math.max(1, Math.round(h / 9)));
+      // тайл фасада — 8 окон в ширину (~26 м) и 16 этажей (~48 м),
+      // поэтому делим размеры дома на метры тайла, иначе окна сливаются в кашу
+      World.scaleUV(geo, Math.max(1, Math.round(bw / 26)), Math.max(1, Math.round(h / 48)));
       var m = new THREE.Matrix4().makeRotationY(Math.random() * Math.PI);
       m.setPosition(x, h / 2, z);
       geo.applyMatrix4(m);
@@ -1809,13 +2014,26 @@
         var cap = new THREE.BoxGeometry(bw * 0.4, ch, bd * 0.4);
         cap.translate(x, h + ch / 2, z);
         capGeos.push(cap);
+        // на высоких домах ещё и антенна — силуэт города становится живее
+        if (h > 110 && Math.random() > 0.4) {
+          var mast = new THREE.CylinderGeometry(0.35, 0.6, 18 + Math.random() * 16, 6);
+          mast.translate(x, h + ch + 9, z);
+          capGeos.push(mast);
+        }
       }
       placed++;
     }
+    var STYLES = ['glass', 'sand', 'white', 'stripe'];
     for (var b2 = 0; b2 < BUCKETS; b2++) {
       if (!buckets[b2].length) continue;
-      group.add(new THREE.Mesh(World.mergeGeometries(buckets[b2]),
-        new THREE.MeshLambertMaterial({ map: World.windowsTexture() })));
+      var tex = World.facadeTexture(STYLES[b2 % STYLES.length]);
+      // стеклянные фасады бликуют на солнце, каменные — нет
+      var glassy = STYLES[b2 % STYLES.length] !== 'sand';
+      var mat = glassy
+        ? new THREE.MeshPhongMaterial({ map: tex, emissiveMap: tex, emissive: 0x1a1712,
+            specular: 0x6a7c8c, shininess: 42 })
+        : new THREE.MeshLambertMaterial({ map: tex, emissiveMap: tex, emissive: 0x141210 });
+      group.add(new THREE.Mesh(World.mergeGeometries(buckets[b2]), mat));
     }
     if (capGeos.length) {
       group.add(new THREE.Mesh(World.mergeGeometries(capGeos),
@@ -1828,6 +2046,14 @@
     var burj = new THREE.Vector3(fin.x, 0, fin.z).addScaledVector(fside, -82);
     World.burjPosition = burj.clone();
     World.buildBurj(group, burj.x, burj.z);
+
+    // Дворец шейха на дальней стороне круга
+    var pd = track.length * 0.52;
+    var pp = track.pointAt(pd);
+    var pn = track.sideAt(pd);
+    var pt = track.tangentAt(pd);
+    var palace = new THREE.Vector3(pp.x, 0, pp.z).addScaledVector(pn, 105);
+    World.buildPalace(group, palace.x, palace.z, Math.atan2(-pn.x, -pn.z));
 
     // Пальмы вдоль трассы: стоят на песке за насыпью, поэтому отступ зависит
     // от высоты дороги в этом месте
@@ -1892,8 +2118,9 @@
 
   /* Бурдж-Халифа: три крыла со ступенчатыми отступами, шпиль и площадь. */
   World.buildBurj = function (group, x, z) {
-    var winTex = World.windowsTexture();
-    var glassMat = new THREE.MeshLambertMaterial({ map: winTex });
+    var winTex = World.facadeTexture('glass');
+    var glassMat = new THREE.MeshPhongMaterial({ map: winTex, emissiveMap: winTex,
+      emissive: 0x1b1814, specular: 0x8899aa, shininess: 60 });
     var trimMat = new THREE.MeshLambertMaterial({ color: 0xcfd8de });
 
     var glass = [], trim = [];
@@ -1903,7 +2130,7 @@
     for (var i = 0; i < sections; i++) {
       var h = 30 - i * 0.55;
       var wing = new THREE.CylinderGeometry(w, w * 0.97, h, 6);
-      World.scaleUV(wing, Math.max(1, Math.round(w / 3)), Math.max(1, Math.round(h / 7)));
+      World.scaleUV(wing, Math.max(1, Math.round(w / 9)), Math.max(1, Math.round(h / 34)));
       var m = new THREE.Matrix4().makeRotationY(i * 0.085);
       m.setPosition(x, y + h / 2, z);
       wing.applyMatrix4(m);
@@ -1929,6 +2156,7 @@
     trim.push(tip);
 
     group.add(new THREE.Mesh(World.mergeGeometries(glass), glassMat));
+    World.burjMaterial = glassMat;
     group.add(new THREE.Mesh(World.mergeGeometries(trim), trimMat));
 
     // площадь и бассейн у подножия
@@ -1953,6 +2181,223 @@
       new THREE.MeshLambertMaterial({ color: 0x3f7d34, side: THREE.DoubleSide })));
 
     return { x: x, z: z, height: y + 176 };
+  };
+
+  /* ---------- Дворец шейха ---------- */
+
+  World.sandstoneTexture = function () {
+    return canvasTexture(256, 256, function (g, w, h) {
+      g.fillStyle = '#e0cba6';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 4000; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,250,236,0.4)' : 'rgba(168,142,104,0.25)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2.5, 2.5);
+      }
+      // кладка крупными блоками
+      g.strokeStyle = 'rgba(150,124,88,0.35)';
+      g.lineWidth = 1.5;
+      for (var y = 0; y < h; y += 32) {
+        g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+        var off = (y / 32) % 2 ? 32 : 0;
+        for (var x = off; x < w; x += 64) {
+          g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 32); g.stroke();
+        }
+      }
+    }, 3, 3);
+  };
+
+  /* Стена дворца: стрельчатые арки и решётчатый узор. */
+  World.palaceWallTexture = function () {
+    return canvasTexture(256, 256, function (g, w, h) {
+      g.fillStyle = '#e4d0ac';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 2500; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,250,238,0.35)' : 'rgba(170,144,106,0.22)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2.5, 2.5);
+      }
+      // ряд стрельчатых окон
+      for (var c = 0; c < 4; c++) {
+        var cx = 32 + c * 64, cy = 150;
+        g.fillStyle = '#8a6a44';
+        g.beginPath();
+        g.moveTo(cx - 16, cy + 44);
+        g.lineTo(cx - 16, cy - 8);
+        g.quadraticCurveTo(cx, cy - 46, cx + 16, cy - 8);
+        g.lineTo(cx + 16, cy + 44);
+        g.closePath();
+        g.fill();
+        g.fillStyle = '#3d4b57';
+        g.beginPath();
+        g.moveTo(cx - 11, cy + 44);
+        g.lineTo(cx - 11, cy - 6);
+        g.quadraticCurveTo(cx, cy - 38, cx + 11, cy - 6);
+        g.lineTo(cx + 11, cy + 44);
+        g.closePath();
+        g.fill();
+        // переплёт
+        g.strokeStyle = 'rgba(226,206,166,0.9)';
+        g.lineWidth = 2;
+        g.beginPath(); g.moveTo(cx, cy - 30); g.lineTo(cx, cy + 44); g.stroke();
+        g.beginPath(); g.moveTo(cx - 11, cy + 10); g.lineTo(cx + 11, cy + 10); g.stroke();
+      }
+      // орнаментальный поясок
+      g.fillStyle = '#b98f52';
+      g.fillRect(0, 60, w, 5);
+      g.fillRect(0, 92, w, 5);
+      g.fillStyle = 'rgba(190,140,70,0.55)';
+      for (var x2 = 8; x2 < w; x2 += 24) {
+        g.beginPath();
+        g.moveTo(x2, 66); g.lineTo(x2 + 12, 76); g.lineTo(x2, 86); g.lineTo(x2 - 12, 76);
+        g.closePath(); g.fill();
+      }
+      g.fillStyle = 'rgba(140,112,72,0.35)';
+      g.fillRect(0, h - 26, w, 26);
+    }, 2, 1);
+  };
+
+  /* Дворец шейха: стены с зубцами, четыре башни, золотой купол и фонтан. */
+  World.buildPalace = function (group, x, z, angle) {
+    var stoneMat = new THREE.MeshLambertMaterial({ map: World.sandstoneTexture() });
+    var wallMat = new THREE.MeshLambertMaterial({ map: World.palaceWallTexture() });
+    var goldMat = new THREE.MeshPhongMaterial({ color: 0xd9a441, specular: 0xfff0c0, shininess: 70 });
+    var tealMat = new THREE.MeshPhongMaterial({ color: 0x2f8f8a, specular: 0xbfeeea, shininess: 50 });
+
+    var root = new THREE.Group();
+    root.position.set(x, 0, z);
+    root.rotation.y = angle || 0;
+    group.add(root);
+
+    // стилобат и стены с зубцами
+    var stone = [];
+    var base = new THREE.BoxGeometry(78, 2.6, 78);
+    base.translate(0, 1.3, 0);
+    stone.push(base);
+    var steps = new THREE.BoxGeometry(26, 1.2, 8);
+    steps.translate(0, 0.6, 43);
+    stone.push(steps);
+
+    for (var side = 0; side < 4; side++) {
+      // каждую стену строим у себя и разворачиваем на свою сторону двора
+      var m = new THREE.Matrix4().makeRotationY(side * Math.PI / 2);
+      var off = new THREE.Matrix4().makeTranslation(0, 0, -37.5);
+      var wall = new THREE.BoxGeometry(78, 8, 3);
+      wall.applyMatrix4(off);
+      wall.applyMatrix4(m);
+      wall.translate(0, 6.6, 0);
+      stone.push(wall);
+
+      // зубцы поверху
+      for (var t = -36; t <= 36; t += 4.5) {
+        var merlon = new THREE.BoxGeometry(2.2, 1.8, 3.2);
+        var mo = new THREE.Matrix4().makeTranslation(t, 0, -37.5);
+        merlon.applyMatrix4(mo);
+        merlon.applyMatrix4(m);
+        merlon.translate(0, 11.5, 0);
+        stone.push(merlon);
+      }
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(stone), stoneMat));
+
+    // главный корпус
+    var mainBody = new THREE.Mesh(new THREE.BoxGeometry(38, 17, 28), wallMat);
+    mainBody.position.y = 11.5;
+    root.add(mainBody);
+
+    var wings = [];
+    for (var wx = -1; wx <= 1; wx += 2) {
+      var wing = new THREE.BoxGeometry(16, 12, 20);
+      wing.translate(wx * 26, 9, -2);
+      wings.push(wing);
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(wings), wallMat));
+
+    // угловые башни с шатрами
+    var towers = [], roofs = [];
+    for (var tx = -1; tx <= 1; tx += 2) {
+      for (var tz = -1; tz <= 1; tz += 2) {
+        var tower = new THREE.CylinderGeometry(5, 5.6, 20, 12);
+        tower.translate(tx * 34, 10, tz * 34);
+        towers.push(tower);
+        var ring = new THREE.CylinderGeometry(6, 6, 1.2, 12);
+        ring.translate(tx * 34, 20, tz * 34);
+        towers.push(ring);
+        var cone = new THREE.ConeGeometry(6.2, 8, 12);
+        cone.translate(tx * 34, 24.6, tz * 34);
+        roofs.push(cone);
+      }
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(towers), stoneMat));
+    root.add(new THREE.Mesh(World.mergeGeometries(roofs), tealMat));
+
+    // золотой купол на барабане
+    var drum = new THREE.Mesh(new THREE.CylinderGeometry(11, 11.6, 5, 16), wallMat);
+    drum.position.y = 22.5;
+    root.add(drum);
+
+    var domes = [];
+    var dome = new THREE.SphereGeometry(11.2, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.52);
+    dome.translate(0, 25, 0);
+    domes.push(dome);
+    for (var dx = -1; dx <= 1; dx += 2) {
+      var small = new THREE.SphereGeometry(5.2, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.52);
+      small.translate(dx * 26, 15, -2);
+      domes.push(small);
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(domes), goldMat));
+
+    // шпиль с полумесяцем
+    var spire = [];
+    var pin = new THREE.CylinderGeometry(0.35, 0.5, 8, 8);
+    pin.translate(0, 39, 0);
+    spire.push(pin);
+    var ball = new THREE.SphereGeometry(1.1, 10, 8);
+    ball.translate(0, 43.4, 0);
+    spire.push(ball);
+    var crescent = new THREE.TorusGeometry(1.5, 0.28, 8, 16, Math.PI * 1.25);
+    var mc = new THREE.Matrix4().makeRotationZ(-0.6);
+    mc.setPosition(0, 46, 0);
+    crescent.applyMatrix4(mc);
+    spire.push(crescent);
+    root.add(new THREE.Mesh(World.mergeGeometries(spire), goldMat));
+
+    // ворота: тёмная арочная ниша
+    var gate = new THREE.Mesh(new THREE.BoxGeometry(9, 11, 1.2),
+      new THREE.MeshLambertMaterial({ color: 0x4a3626 }));
+    gate.position.set(0, 7, 14.4);
+    root.add(gate);
+    var gateArch = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 1.2, 16, 1, false, 0, Math.PI),
+      new THREE.MeshLambertMaterial({ color: 0x4a3626 }));
+    gateArch.rotation.x = Math.PI / 2;
+    gateArch.rotation.z = Math.PI;
+    gateArch.position.set(0, 12.4, 14.4);
+    root.add(gateArch);
+
+    // фонтан во дворе
+    var pool = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 1, 20), stoneMat);
+    pool.position.set(0, 3, 26);
+    root.add(pool);
+    var water = new THREE.Mesh(new THREE.CylinderGeometry(8.2, 8.2, 0.4, 20),
+      new THREE.MeshPhongMaterial({ color: 0x2f7fa8, specular: 0xdff2ff, shininess: 80 }));
+    water.position.set(0, 3.5, 26);
+    root.add(water);
+    var jet = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.9, 4, 10),
+      new THREE.MeshLambertMaterial({ color: 0xbfe3f2 }));
+    jet.position.set(0, 5.6, 26);
+    root.add(jet);
+
+    // пальмы вдоль стилобата
+    var trunks = [], leaves = [];
+    for (var i = 0; i < 12; i++) {
+      var a = i / 12 * Math.PI * 2;
+      World.palmGeometry(x + Math.cos(a) * 50, z + Math.sin(a) * 50, trunks, leaves);
+    }
+    group.add(new THREE.Mesh(World.mergeGeometries(trunks),
+      new THREE.MeshLambertMaterial({ color: 0x8a6a44 })));
+    group.add(new THREE.Mesh(World.mergeGeometries(leaves),
+      new THREE.MeshLambertMaterial({ color: 0x3f7d34, side: THREE.DoubleSide })));
+
+    World.palacePosition = new THREE.Vector3(x, 0, z);
+    return root;
   };
 
   /* Геометрия одной пальмы, разложенная по спискам «ствол» и «листья». */
@@ -3295,7 +3740,7 @@
     // живую картинку, чем сырой вывод
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.98;
+    renderer.toneMappingExposure = 0.94;
     renderer.physicallyCorrectLights = false;
     World.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
 
@@ -3608,6 +4053,9 @@
     scene.fog.color.setHex(0xcbb489).lerp(new THREE.Color(0xbd8f4a), storm.level);
     renderer.setClearColor(new THREE.Color(0xbcd3e6).lerp(new THREE.Color(0xc79a52), storm.level));
     if (sunLight) sunLight.intensity = 1.3 * (1 - 0.55 * storm.level);
+    if (World.skyMesh) {
+      World.skyMesh.material.color.setHex(0xffffff).lerp(new THREE.Color(0xb98b46), storm.level);
+    }
     sfx.setWind(storm.level);
     storm.system.update(dt, storm.level, camera.position);
   }

@@ -92,7 +92,7 @@
     // живую картинку, чем сырой вывод
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.98;
+    renderer.toneMappingExposure = 0.94;
     renderer.physicallyCorrectLights = false;
     World.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
 
@@ -405,6 +405,9 @@
     scene.fog.color.setHex(0xcbb489).lerp(new THREE.Color(0xbd8f4a), storm.level);
     renderer.setClearColor(new THREE.Color(0xbcd3e6).lerp(new THREE.Color(0xc79a52), storm.level));
     if (sunLight) sunLight.intensity = 1.3 * (1 - 0.55 * storm.level);
+    if (World.skyMesh) {
+      World.skyMesh.material.color.setHex(0xffffff).lerp(new THREE.Color(0xb98b46), storm.level);
+    }
     sfx.setWind(storm.level);
     storm.system.update(dt, storm.level, camera.position);
   }
