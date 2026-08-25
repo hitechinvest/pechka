@@ -50,7 +50,7 @@
   .btns button.sel { background: var(--gold); color: #22160a; border-color: var(--gold); }
   #ai-note, .note { font-size: 13px; color: #9fb2cc; margin-top: 8px; }
   #limit-box {
-    position: absolute; top: 150px; right: 14px;
+    position: absolute; top: 172px; right: 14px;
     display: none; align-items: center; gap: 9px; padding: 7px 14px 7px 8px;
     background: var(--panel); border-radius: 40px; border: 1px solid rgba(255,255,255,0.12);
   }
@@ -183,6 +183,12 @@
     font-size: 13.5px; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap;
   }
   #storm-warn.rain { background: rgba(52,96,140,0.92); }
+  #soar-warn {
+    position: absolute; top: 52px; left: 50%; transform: translateX(-50%);
+    padding: 7px 14px; opacity: 0; transition: opacity .3s;
+    background: rgba(255,210,63,0.92); color: #3a2600; border-radius: 12px;
+    font-size: 13.5px; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap;
+  }
   #jail-warn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     padding: 14px 26px; opacity: 0; transition: opacity .3s;
@@ -191,6 +197,10 @@
     text-align: center; white-space: nowrap; box-shadow: 0 0 40px rgba(255,138,61,0.35);
   }
   .pedal.jailed { background: rgba(255,138,61,0.3); border-color: #ff8a3d !important; }
+  .pbtn.walk {
+    width: 100%; margin-top: 5px; padding: 7px; font-size: 12px; font-weight: 800;
+    background: rgba(140,233,154,0.18); border: 1px solid rgba(140,233,154,0.5); color: #cff5d6;
+  }
 
   /* админ-панель */
   #admin {
@@ -254,7 +264,7 @@
     #watching { font-size: 11px; }
     /* на узком экране от светофора остаётся лампа и расстояние */
     .light-box { gap: 6px; padding: 7px 9px; }
-    #limit-box { top: 118px; right: 8px; padding: 5px 9px 5px 5px; }
+    #limit-box { top: 152px; right: 8px; padding: 5px 9px 5px 5px; }
     #limit-text { display: none; }
     #light-text { display: none; }
     #light-lamp { width: 16px; height: 16px; }
@@ -304,6 +314,7 @@
   <div id="limit-box"><span id="limit-num">60</span><span id="limit-text">км/ч</span></div>
   <div id="granny-warn">🧕 БАБУШКА НА ДОРОГЕ <span id="granny-dist">0 м</span></div>
   <div id="storm-warn">🌪 ПЕСЧАНАЯ БУРЯ</div>
+  <div id="soar-warn">☀️ ПОЛЁТ</div>
   <div id="jail-warn"><span id="jail-text">ТЮРЬМА</span></div>
 
   <div id="flash"></div>
@@ -342,6 +353,10 @@
     <div class="arow">
       <button id="adm-storm">Песчаная буря</button>
       <button id="adm-rain">Ливень</button>
+    </div>
+    <div class="arow">
+      <button id="adm-snow">Снегопад</button>
+      <button id="adm-foot">Сойти с печки</button>
     </div>
     <div class="arow">
       <button id="adm-heli">Вертолёт</button>
@@ -425,6 +440,11 @@
       <b>Супер-ускорение Z</b> есть только у первого игрока: жжёт пар из котла,
       котёл потом сам наполняется. На «Сложной» и «Печных асах» турбо появляется
       и у компьютера.<br>
+      <b>Пешком.</b> Первый игрок может <b>сойти с печки клавишей G</b> (на телефоне —
+      кнопка ПЕШКОМ) и погулять: те же клавиши — шаг вперёд и вбок, <b>Z</b> — бегом.
+      Печка стоит и ждёт, а гонка идёт дальше. На дороге пешком опасно: <b>собьёт печка</b>,
+      <b>бабушка отходит тростью</b>, а <b>верблюд бросится в погоню и начнёт харкаться</b>.
+      Чтобы вернуться, подойди к своей печке и снова нажми G.<br>
       <b>Прочее.</b> <b>C</b> — камера на другую печку, <b>V</b> — вид,
       <b>X</b> — звук, <b>Y</b> — музыка, <b>A</b> — админ-панель.
       На телефоне под экраном кнопки ◀ газ ▶ и ТУРБО.

@@ -4025,57 +4025,66 @@
     return g;
   };
 
-  /* Руки солнца: два золотых луча с ладонями, которые подхватывают печку. */
+  /* Руки солнца: два золотых луча с ладонями, которые подхватывают печку.
+     Лучи — прозрачные конусы «в небо», ладони — плотные, чтобы читались. */
   World.buildSunHands = function () {
     var g = new THREE.Group();
-    var mat = new THREE.MeshLambertMaterial({
-      color: 0xffd25a, emissive: 0xb87c10, transparent: true, opacity: 0.92
+    var rayMat = new THREE.MeshBasicMaterial({
+      color: 0xffd873, transparent: true, opacity: 0.28,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide
     });
-    g.userData.mat = mat;
+    var handMat = new THREE.MeshLambertMaterial({
+      color: 0xffc63c, emissive: 0x8a5c05, transparent: true, opacity: 0.95
+    });
+    g.userData.rayMat = rayMat;
+    g.userData.handMat = handMat;
 
+    var TILT = 0.42;                       // наклон луча к солнцу
+    var L = 70;
     for (var s = -1; s <= 1; s += 2) {
       var arm = new THREE.Group();
-      arm.position.set(s * 2.6, 1.2, 0);
-      var parts = [];
-      // луч-рука уходит вверх к солнцу, чуть в сторону
-      var L = 90;
-      var beam = new THREE.CylinderGeometry(0.16, 0.85, L, 10, 1, true);
-      var mb = new THREE.Matrix4().makeRotationZ(s * -0.16);
-      mb.setPosition(s * 0.5 + s * L * 0.08, L / 2, 0);
-      beam.applyMatrix4(mb);
-      parts.push(beam);
-      // ладонь
-      var palm = new THREE.SphereGeometry(1.15, 12, 9);
-      var mp = new THREE.Matrix4().makeScale(1, 0.55, 1.25);
+      arm.position.set(s * 3.1, 1.1, 0);
+      arm.rotation.z = s * 0.12;
+      arm.rotation.x = -TILT;              // после поворота группы это «в сторону солнца»
+
+      var beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.6, 0.55, L, 12, 1, true), rayMat);
+      beam.position.y = L / 2;
+      arm.add(beam);
+
+      // ладонь и пальцы: держат печку с боков
+      var hand = [];
+      var palm = new THREE.SphereGeometry(1.05, 14, 10);
+      var mp = new THREE.Matrix4().makeScale(0.75, 0.55, 1.35);
       mp.setPosition(0, 0, 0);
       palm.applyMatrix4(mp);
-      parts.push(palm);
-      // пальцы охватывают печку
+      hand.push(palm);
+      var wrist = new THREE.CylinderGeometry(0.55, 0.75, 1.6, 10);
+      wrist.translate(0, 0.9, 0);
+      hand.push(wrist);
       for (var f = 0; f < 4; f++) {
-        var fin = new THREE.CylinderGeometry(0.17, 0.2, 1.5, 7);
-        var mf = new THREE.Matrix4().makeRotationX(0.5 - f * 0.12);
-        mf.premultiply(new THREE.Matrix4().makeRotationZ(s * 0.9));
-        mf.setPosition(s * -0.75, 0.35, (f - 1.5) * 0.62);
+        var fin = new THREE.CylinderGeometry(0.17, 0.2, 1.7, 7);
+        var mf = new THREE.Matrix4().makeRotationZ(s * -1.15);
+        mf.setPosition(s * -0.85, 0.35, (f - 1.5) * 0.66);
         fin.applyMatrix4(mf);
-        parts.push(fin);
+        hand.push(fin);
       }
-      var thumb = new THREE.CylinderGeometry(0.19, 0.22, 1.3, 7);
-      var mt = new THREE.Matrix4().makeRotationX(Math.PI / 2.4);
-      mt.premultiply(new THREE.Matrix4().makeRotationZ(s * 0.4));
-      mt.setPosition(s * -0.3, 0.3, 1.0);
+      var thumb = new THREE.CylinderGeometry(0.2, 0.24, 1.4, 7);
+      var mt = new THREE.Matrix4().makeRotationX(-1.15);
+      mt.setPosition(s * -0.2, 0.1, 1.15);
       thumb.applyMatrix4(mt);
-      parts.push(thumb);
+      hand.push(thumb);
+      arm.add(new THREE.Mesh(World.mergeGeometries(hand), handMat));
 
-      arm.add(new THREE.Mesh(World.mergeGeometries(parts), mat));
       g.add(arm);
     }
 
     var halo = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: World.glowTexture(255, 232, 150), transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.6
+      map: World.glowTexture(255, 226, 140), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.35
     }));
-    halo.scale.set(16, 16, 1);
-    halo.position.y = 1.6;
+    halo.scale.set(9, 9, 1);
+    halo.position.y = 2.4;
     g.add(halo);
     g.userData.halo = halo;
     g.visible = false;

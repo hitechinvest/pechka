@@ -26,7 +26,7 @@
      положению, поэтому раскладка (русская или латиница) не важна.
      Цифра 1…7 — дублёр газа. */
   var HUMAN_KEYS = [
-    { short: '↑', label: '↑ · ← → · Z (турбо)', throttle: ['ArrowUp', 'Space', 'Digit1'], left: ['ArrowLeft'], right: ['ArrowRight'], boost: ['KeyZ'] },
+    { short: '↑', label: '↑ · ← → · Z (турбо) · G (пешком)', throttle: ['ArrowUp', 'Space', 'Digit1'], left: ['ArrowLeft'], right: ['ArrowRight'], boost: ['KeyZ'], foot: ['KeyG'] },
     { short: 'W', label: 'W · Q E', throttle: ['KeyW', 'Digit2'], left: ['KeyQ'], right: ['KeyE'], boost: [] },
     { short: 'I', label: 'I · J L', throttle: ['KeyI', 'Digit3'], left: ['KeyJ'], right: ['KeyL'], boost: [] },
     { short: 'T', label: 'T · F H', throttle: ['KeyT', 'Digit4'], left: ['KeyF'], right: ['KeyH'], boost: [] },
@@ -257,7 +257,7 @@
     var cm = World.buildCamel();
     scene.add(cm);
     camel = { isCamel: true, mesh: cm, active: false, dist: 0, lane: 0, dir: 1,
-      speed: 1, walk: 0, timer: 25 + Math.random() * 30 };
+      speed: 1, walk: 0, timer: 25 + Math.random() * 30, chase: null, spit: 0 };
 
     var rm = World.buildRoach();
     scene.add(rm);
@@ -285,6 +285,11 @@
       police[i].mesh.visible = false;
     }
     camel.active = false; camel.mesh.visible = false; camel.timer = 30 + Math.random() * 30;
+    camel.chase = null; camel.spit = 0;
+    for (var w = 0; w < racers.length; w++) {
+      if (racers[w].onFoot) racers[w].onFoot = false;
+      if (racers[w].foot) racers[w].foot.mesh.visible = false;
+    }
     roach.active = false; roach.mesh.visible = false; roach.timer = 22 + Math.random() * 25;
     heli.active = false; heli.mesh.visible = false; heli.timer = 25 + Math.random() * 35;
     storm.active = false; storm.level = 0; storm.timer = 40 + Math.random() * 40; storm.left = 0;
@@ -422,7 +427,8 @@
         flash('Лакукарача перебегает дорогу!', '#c98b5a');
       }
     }
-    updateCrosser(camel, dt, 3);
+    if (camel.chase) updateCamelChase(dt);
+    else updateCrosser(camel, dt, 3);
     updateCrosser(roach, dt, 14);
     // таракан ещё и виляет
     if (roach.active) roach.mesh.rotation.z = Math.sin(roach.walk * 0.6) * 0.12;
@@ -641,6 +647,7 @@
       flash(r.name + ': ' + reason + ' — прощено (админ)', '#5dd6ff');
       return;
     }
+    dismount(r);
     r.jail = seconds;
     r.jailReason = reason;
     r.speed = 0;
@@ -944,10 +951,10 @@
     for (var i = 0; i < racers.length; i++) if (racers[i].soarY > 0.2) flyer = racers[i];
     if (!flyer) { sunHands.visible = false; return; }
     sunHands.visible = true;
-    var mat = sunHands.userData.mat;
     var k = Math.min(1, flyer.soarY / SOAR_HEIGHT);
-    mat.opacity = 0.35 + k * 0.55;
-    sunHands.userData.halo.material.opacity = 0.3 + k * 0.4;
+    sunHands.userData.handMat.opacity = 0.5 + k * 0.45;
+    sunHands.userData.rayMat.opacity = 0.12 + k * 0.2;
+    sunHands.userData.halo.material.opacity = 0.15 + k * 0.25;
     sunHands.position.copy(flyer.mesh.position);
     sunHands.position.y -= 0.6;
     // руки тянутся с той стороны, где солнце
@@ -1070,9 +1077,13 @@
     r.speed = 0;
     r.throttle = false;
     r.boosting = false;
-    r.foot.dist = r.dist;
-    r.foot.lane = r.lane + (r.lane >= 0 ? -2.4 : 2.4);
+    // выходим чуть вперёд, иначе камера упрётся в собственную печку
+    r.foot.dist = track.norm(r.dist + 4.5);
+    // сходим в сторону ближней обочины, чтобы не оказаться сразу под колёсами
+    var out = r.lane >= 0 ? 1 : -1;
+    r.foot.lane = Math.max(-(track.width / 2 + 3), Math.min(track.width / 2 + 3, r.lane + out * 4));
     r.foot.stun = 0;
+    r.foot.safe = 2;
     r.foot.mesh.visible = true;
     placeWalker(r.foot);
     flash(r.name + ' слез с печки — осторожно, тут ездят!', '#ffd23f');
@@ -1096,6 +1107,7 @@
       r.throttle = false;
       r.steer = 0;
 
+      if (w.safe > 0) w.safe -= dt;
       if (w.stun > 0) {
         w.stun -= dt;
         w.mesh.rotation.x = -1.3;                 // лежит
@@ -1143,6 +1155,7 @@
   /* Пешком опасно: печки сбивают, бабушка лупит тростью, верблюд гонится. */
   function checkWalkerDanger(r, w, dt) {
     // печка на полном ходу
+    if (w.safe > 0) return;
     for (var i = 0; i < racers.length; i++) {
       var o = racers[i];
       if (o === r || o.dq || o.jail > 0 || o.soarY > 1 || o.speed < 3) continue;
@@ -1554,6 +1567,8 @@
         status: null,
         puddleCooldown: 0,
         air: 0,            // насколько печка сейчас оторвалась от дороги
+        onFoot: false,     // хозяин слез с печки и гуляет
+        foot: null,
         soarLeft: 0,       // сколько ещё лететь на солнечных руках
         soarY: 0,          // текущая высота полёта над дорогой
         flying: false,
@@ -1673,12 +1688,21 @@
     return b > a;
   }
 
+  /* Хозяина возвращают в печку насильно: тюрьма, снятие, финиш. */
+  function dismount(r) {
+    if (!r.onFoot) return;
+    r.onFoot = false;
+    if (r.foot) r.foot.mesh.visible = false;
+    if (camel.chase && camel.chase.owner === r) { camel.chase = null; camel.spit = 0; }
+  }
+
   function disqualify(r, reason) {
     if (r.dq || r.finished) return;
     if (admin.invincible && r.isHuman) {
       flash(r.name + ': ' + (reason || 'нарушение') + ' — прощено (админ)', '#5dd6ff');
       return;
     }
+    dismount(r);
     r.dq = true;
     r.dqReason = reason || 'проехал на красный';
     r.place = 0;
@@ -1812,6 +1836,18 @@
         r.mesh.userData.fireGlow.visible = true;
         flash(r.name + ' вышел из тюрьмы', '#8ce99a');
       }
+      placeRacer(r);
+      animateStove(r, dt);
+      return;
+    }
+
+    if (r.onFoot) {
+      // хозяин ушёл — печка стоит и ждёт, только огонь потрескивает
+      r.throttle = false;
+      r.steer = 0;
+      r.boosting = false;
+      r.speed = Math.max(0, r.speed - BRAKE * dt);
+      r.dist += r.speed * dt;
       placeRacer(r);
       animateStove(r, dt);
       return;
@@ -2117,6 +2153,17 @@
     return r;
   }
 
+  /* Пока хозяин гуляет, камера едет за ним, а не за брошенной печкой. */
+  function camTargetOf(r) {
+    if (!r || !r.onFoot || !r.foot) return r;
+    if (!r.footCam) r.footCam = { boosting: false, soarY: 0, walker: true };
+    r.footCam.dist = r.foot.dist;
+    r.footCam.lane = r.foot.lane;
+    r.footCam.mesh = r.foot.mesh;
+    r.footCam.speed = r.foot.speed;
+    return r.footCam;
+  }
+
   function updateCamera(dt, r) {
     if (!r) return;
     var t = track.tangentAt(r.dist);
@@ -2134,9 +2181,10 @@
 
     var lift = r.soarY || 0;
     if (cameraMode === 0) {
-      desired.copy(behind(r.boosting ? 18.5 : 16, (r.boosting ? 7.4 : 6.8) + lift, 0.85));
-      look.addScaledVector(t, 13);
-      look.y += 2.6;
+      desired.copy(behind(r.walker ? 8.5 : (lift > 1 ? 21 : (r.boosting ? 18.5 : 16)),
+        (r.walker ? 6.2 : (r.boosting ? 7.4 : 6.8)) + lift * 0.9, 0.85));
+      look.addScaledVector(t, r.walker ? 7 : 13);
+      look.y += r.walker ? 1.6 : 2.6;
     } else if (cameraMode === 1) {
       desired.copy(behind(30, 15 + lift, 0.5));
       look.addScaledVector(t, 24);
@@ -2205,8 +2253,13 @@
 
     var f = focusRacer();
     if (!f) return;
-    ui.speed.textContent = Math.round(f.speed * 3.6);
-    ui.watching.textContent = f.name + (f.isHuman ? ' · клавиша ' + f.keyLabel : ' · компьютер');
+    if (f.onFoot) {
+      ui.speed.textContent = Math.round((f.foot ? f.foot.speed : 0) * 3.6);
+      ui.watching.textContent = f.name + ' пешком · G — вернуться в печку';
+    } else {
+      ui.speed.textContent = Math.round(f.speed * 3.6);
+      ui.watching.textContent = f.name + (f.isHuman ? ' · клавиша ' + f.keyLabel : ' · компьютер');
+    }
 
     var ni = nextIntersection(f);
     var st = ni.inter.state;
@@ -2240,18 +2293,26 @@
       ui.steamBox.classList.toggle('empty', f.steam < STEAM_MIN && !f.boosting);
     }
 
-    // бабушка на дороге впереди
-    var granny = grannyAhead(f, 110);
+    // бабушка на дороге впереди (в полёте она уже не помеха)
+    var granny = f.soarY > 1 ? null : grannyAhead(f, 110);
     ui.granny.style.opacity = granny ? '1' : '0';
     if (granny) ui.grannyDist.textContent = Math.round(granny.gap) + ' м';
+
+    // полёт на солнечных руках
+    ui.soar.style.opacity = f.soarY > 1 ? '1' : '0';
+    if (f.soarY > 1) {
+      ui.soar.textContent = '☀️ ПОЛЁТ · ' + Math.ceil(f.soarLeft) + ' с · ' +
+        Math.round(f.soarY) + ' м';
+    }
 
     // тюрьма и песчаная буря
     ui.jail.style.opacity = f.jail > 0 ? '1' : '0';
     if (f.jail > 0) ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' + f.jailReason;
     ui.storm.style.opacity = storm.level > 0.25 ? '1' : '0';
     if (storm.level > 0.25) {
-      ui.storm.textContent = storm.kind === 'rain' ? '🌧 ЛИВЕНЬ' : '🌪 ПЕСЧАНАЯ БУРЯ';
-      ui.storm.classList.toggle('rain', storm.kind === 'rain');
+      ui.storm.textContent = storm.kind === 'rain' ? '🌧 ЛИВЕНЬ'
+        : (storm.kind === 'snow' ? '❄️ СНЕГОПАД' : '🌪 ПЕСЧАНАЯ БУРЯ');
+      ui.storm.classList.toggle('rain', storm.kind !== 'sand');
     }
 
     // состояние каждого игрока
@@ -2341,6 +2402,7 @@
       updateAnimals(dt);
       updateCoin(dt);
       updateSigns(dt);
+      updateWalkers(dt);
       for (var i = 0; i < racers.length; i++) updateRacer(racers[i], dt);
       resolveContacts();
       checkGrannyHits();
@@ -2372,7 +2434,11 @@
       if (lbl) lbl.visible = !f || racers[n] !== f;
     }
     if (state === 'menu') updateMenuCamera(dt);
-    else { updateCamera(dt, f); updateSun(f); }
+    else {
+      var camTarget = camTargetOf(f);
+      updateCamera(dt, camTarget);
+      updateSun(camTarget);
+    }
 
     if (state === 'race' && f) {
       music.setIntensity(f.lap >= totalLaps ? 3 : 2);
@@ -2401,6 +2467,12 @@
     global.addEventListener('keydown', function (e) {
       keys[e.code] = true;
       if (swallow.test(e.code)) e.preventDefault();
+      if (state === 'race') {
+        for (var hk = 0; hk < racers.length; hk++) {
+          var hr = racers[hk];
+          if (hr.isHuman && hr.keys.foot && hr.keys.foot.indexOf(e.code) >= 0) toggleFoot(hr);
+        }
+      }
       if (state !== 'menu') {
         if (e.code === 'KeyC') cycleFocus();
         if (e.code === 'KeyV') cameraMode = (cameraMode + 1) % 3;
@@ -2448,7 +2520,8 @@
       el.className = 'pedal';
       el.style.borderColor = color;
       var turbo = (i === 0)
-        ? '<button class="pbtn turbo" data-act="boost">ТУРБО Z</button><div class="steam"><i></i></div>'
+        ? '<button class="pbtn turbo" data-act="boost">ТУРБО Z</button><div class="steam"><i></i></div>' +
+          '<button class="pbtn walk" data-act="foot">ПЕШКОМ G</button>'
         : '';
       el.innerHTML =
         '<div class="prow">' +
@@ -2472,6 +2545,7 @@
           ev.preventDefault();
           if (act === 'gas') touchThrottle[idx] = true;
           else if (act === 'boost') touchBoost[idx] = true;
+          else if (act === 'foot') { if (racers[idx]) toggleFoot(racers[idx]); }
           else touchSteer[idx] = act === 'left' ? -1 : 1;
           node.classList.add('held');
           sfx.resume();
@@ -2481,6 +2555,7 @@
           if (ev) ev.preventDefault();
           if (act === 'gas') touchThrottle[idx] = false;
           else if (act === 'boost') touchBoost[idx] = false;
+          else if (act === 'foot') { /* нажатие уже отработало */ }
           else if (touchSteer[idx] === (act === 'left' ? -1 : 1)) touchSteer[idx] = 0;
           node.classList.remove('held');
         }
@@ -2671,6 +2746,14 @@
         camel.speed = 0.25;
       }
     });
+    document.getElementById('adm-snow').addEventListener('click', function () {
+      startWeather('snow');
+    });
+    document.getElementById('adm-foot').addEventListener('click', function () {
+      var f = focusRacer();
+      if (f && f.isHuman) toggleFoot(f);
+      else flash('Пешком ходит только живой игрок', '#ffd23f');
+    });
     document.getElementById('adm-coin').addEventListener('click', function () {
       var f = focusRacer();
       if (!f) return;
@@ -2718,6 +2801,7 @@
     ui.jail = document.getElementById('jail-warn');
     ui.jailText = document.getElementById('jail-text');
     ui.storm = document.getElementById('storm-warn');
+    ui.soar = document.getElementById('soar-warn');
     ui.limitBox = document.getElementById('limit-box');
     ui.limitNum = document.getElementById('limit-num');
     ui.limitText = document.getElementById('limit-text');
@@ -2852,6 +2936,9 @@
           reason: r.dqReason || null, rider: r.rider,
           jail: +r.jail.toFixed(1), jailReason: r.jailReason || null, skid: +r.skid.toFixed(2),
           soar: +(r.soarY || 0).toFixed(1), soarLeft: +(r.soarLeft || 0).toFixed(1),
+          onFoot: !!r.onFoot,
+          foot: r.foot && r.onFoot ? { dist: Math.round(r.foot.dist), lane: +r.foot.lane.toFixed(1),
+            stun: +r.foot.stun.toFixed(1) } : null,
           throttle: r.throttle,
           height: +track.heightAt(r.dist).toFixed(1),
           slope: +(track.slopeAt(r.dist) * 100).toFixed(1),
