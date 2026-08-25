@@ -427,6 +427,56 @@
     this.rotor.gain.setTargetAtTime(Math.max(0, level) * 0.5, this.ctx.currentTime, 0.2);
   };
 
+  /* Шум ливня и раскаты грома. */
+  Sfx.prototype.startRain = function () {
+    this.init();
+    if (!this.ctx || this.rain) return this.rain;
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 900;
+    var lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 6500;
+    var g = this.ctx.createGain();
+    g.gain.value = 0;
+    src.connect(hp).connect(lp).connect(g).connect(this.master);
+    src.start();
+    this.rain = g;
+    return g;
+  };
+
+  Sfx.prototype.setRain = function (level) {
+    if (!this.rain || !this.ctx) return;
+    this.rain.gain.setTargetAtTime(Math.max(0, level) * 0.34, this.ctx.currentTime, 0.3);
+  };
+
+  Sfx.prototype.thunder = function (vol) {
+    this.init();
+    if (!this.ctx || !vol) return;
+    var t = this.ctx.currentTime;
+    // треск разряда
+    this.noise(0.35, 0.2 * vol, 2600);
+    // низкий раскат
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(320, t);
+    lp.frequency.exponentialRampToValueAtTime(70, t + 2.2);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.42 * vol, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.08 * vol, t + 1.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+    src.connect(lp).connect(g).connect(this.master);
+    src.start(t);
+    src.stop(t + 2.5);
+  };
+
   Sfx.prototype.beep = function (freq, dur, gain) {
     this.init();
     if (!this.ctx) return;

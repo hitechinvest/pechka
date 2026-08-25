@@ -38,7 +38,7 @@
 
   var Game = {};
   var renderer, scene, camera, clock;
-  var track, intersections, smoke;
+  var track, intersections, smoke, road;
   var racers = [];
   var grannies = [];
   var granniesTimer = 0;
@@ -47,7 +47,12 @@
   var roach = null;
   var puddles = [];
   var heli = null;
-  var storm = { level: 0, active: false, timer: 45, left: 0, system: null };
+  var storm = {
+    level: 0, active: false, timer: 45, left: 0,
+    kind: 'sand',            // sand — песчаная буря, rain — ливень
+    system: null, rainSystem: null,
+    flash: 0, boltTimer: 0
+  };
   var sfx = new Sfx();
   var music = new Music(sfx);
   var engineNode = null;
@@ -149,7 +154,8 @@
   function buildWorld() {
     track = World.buildTrack();
     World.buildCity(track, scene);
-    var ground = [World.embankmentMesh(track), World.shoulderMesh(track), World.roadMesh(track)];
+    road = World.roadMesh(track);
+    var ground = [World.embankmentMesh(track), World.shoulderMesh(track), road];
     for (var i = 0; i < ground.length; i++) {
       ground[i].receiveShadow = true;
       scene.add(ground[i]);
@@ -188,6 +194,7 @@
     heli = { mesh: hm, active: false, dist: 0, side: 1, timer: 30 + Math.random() * 40, spin: 0 };
 
     storm.system = new World.SandStorm(scene, 900);
+    storm.rainSystem = new World.RainSystem(scene, 1400);
 
     for (var k = 0; k < 9; k++) {
       var pm = World.buildPuddle();
@@ -206,7 +213,9 @@
     roach.active = false; roach.mesh.visible = false; roach.timer = 22 + Math.random() * 25;
     heli.active = false; heli.mesh.visible = false; heli.timer = 25 + Math.random() * 35;
     storm.active = false; storm.level = 0; storm.timer = 40 + Math.random() * 40; storm.left = 0;
+    storm.kind = 'sand'; storm.flash = 0; storm.boltTimer = 0;
     sfx.setWind(0);
+    sfx.setRain(0);
     sfx.setRotor(0);
 
     // лужи раскидываем заново на каждый заезд
@@ -308,10 +317,15 @@
     obj.mesh.position.copy(p).addScaledVector(n, obj.lane);
     obj.mesh.position.y = p.y;
     obj.mesh.rotation.y = Math.atan2(t.x, t.z) + obj.dir * Math.PI / 2;
-    var legs = obj.mesh.userData.legs;
-    for (var i = 0; i < legs.length; i++) {
-      legs[i].rotation.x = Math.sin(obj.walk + i * 1.7) * 0.5;
+    var ud = obj.mesh.userData;
+    for (var i = 0; i < ud.legs.length; i++) {
+      ud.legs[i].rotation.x = Math.sin(obj.walk + i * 1.7) * 0.5;
     }
+    if (ud.head) {                       // верблюд кивает в такт шагу
+      ud.head.rotation.x = Math.sin(obj.walk * 0.5) * 0.12;
+      ud.head.position.y = 3.62 + Math.sin(obj.walk * 0.5 + 1) * 0.07;
+    }
+    if (ud.tail) ud.tail.rotation.z = Math.sin(obj.walk * 0.8) * 0.25;
     if (Math.abs(obj.lane) > MAX_LANE + 6 && obj.lane * obj.dir > 0) {
       obj.active = false;
       obj.mesh.visible = false;
@@ -378,38 +392,79 @@
     }
   }
 
-  /* Песчаная буря: видимость падает почти до нуля на 10–15 секунд. */
+  /* Погода: то песчаная буря, то ливень с грозой. Обе живут по одному
+     таймеру и плавно нарастают, чтобы не переключаться рывком. */
+  function startWeather(kind) {
+    storm.active = true;
+    storm.kind = kind;
+    storm.left = kind === 'rain' ? 14 + Math.random() * 10 : 10 + Math.random() * 5;
+    storm.boltTimer = 2 + Math.random() * 3;
+    if (kind === 'rain') {
+      sfx.startRain();
+      flash('ЛИВЕНЬ! Дорога мокрая', '#7fd4ff');
+    } else {
+      sfx.startWind();
+      flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
+    }
+  }
+
   function updateStorm(dt) {
     if (storm.active) {
       storm.left -= dt;
       if (storm.left <= 0) {
         storm.active = false;
         storm.timer = 45 + Math.random() * 45;
-        flash('Буря улеглась', '#e8cf9d');
+        flash(storm.kind === 'rain' ? 'Дождь кончился' : 'Буря улеглась', '#e8cf9d');
       }
     } else if (!admin.noHazards) {
       storm.timer -= dt;
-      if (storm.timer <= 0) {
-        storm.active = true;
-        storm.left = 10 + Math.random() * 5;
-        sfx.startWind();
-        flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
-      }
+      if (storm.timer <= 0) startWeather(Math.random() < 0.5 ? 'rain' : 'sand');
     }
 
     var target = storm.active ? 1 : 0;
     storm.level += (target - storm.level) * Math.min(1, dt * 0.9);
     if (storm.level < 0.002) storm.level = 0;
 
-    scene.fog.density = 0.0013 + storm.level * 0.0135;
-    scene.fog.color.setHex(0xcbb489).lerp(new THREE.Color(0xbd8f4a), storm.level);
-    renderer.setClearColor(new THREE.Color(0xbcd3e6).lerp(new THREE.Color(0xc79a52), storm.level));
-    if (sunLight) sunLight.intensity = 1.3 * (1 - 0.55 * storm.level);
-    if (World.skyMesh) {
-      World.skyMesh.material.color.setHex(0xffffff).lerp(new THREE.Color(0xb98b46), storm.level);
+    var rain = storm.kind === 'rain' ? storm.level : 0;
+    var sand = storm.kind === 'sand' ? storm.level : 0;
+
+    // молнии: короткая вспышка и раскат чуть позже
+    if (rain > 0.5) {
+      storm.boltTimer -= dt;
+      if (storm.boltTimer <= 0) {
+        storm.boltTimer = 4 + Math.random() * 7;
+        storm.flash = 1;
+        var delay = 300 + Math.random() * 1200;
+        setTimeout(function () { sfx.thunder(0.55 + Math.random() * 0.4); }, delay);
+      }
     }
-    sfx.setWind(storm.level);
-    storm.system.update(dt, storm.level, camera.position);
+    storm.flash = Math.max(0, storm.flash - dt * 3.5);
+
+    // туман, небо и солнце
+    scene.fog.density = 0.0013 + sand * 0.0135 + rain * 0.0055;
+    var fogColor = new THREE.Color(0xcbb489)
+      .lerp(new THREE.Color(0xbd8f4a), sand)
+      .lerp(new THREE.Color(0x6f7b86), rain);
+    scene.fog.color.copy(fogColor);
+    renderer.setClearColor(new THREE.Color(0xbcd3e6)
+      .lerp(new THREE.Color(0xc79a52), sand)
+      .lerp(new THREE.Color(0x5d6874), rain));
+    if (sunLight) {
+      sunLight.intensity = 1.3 * (1 - 0.55 * sand - 0.5 * rain) + storm.flash * 2.2;
+    }
+    if (World.skyMesh) {
+      World.skyMesh.material.color.setHex(0xffffff)
+        .lerp(new THREE.Color(0xb98b46), sand)
+        .lerp(new THREE.Color(0x63707d), rain)
+        .addScalar(storm.flash * 0.5);
+    }
+    // мокрый асфальт темнеет
+    if (road) road.material.color.setHex(0xffffff).lerp(new THREE.Color(0x7d838c), rain);
+
+    sfx.setWind(sand);
+    sfx.setRain(rain);
+    storm.system.update(dt, sand, camera.position);
+    storm.rainSystem.update(dt, rain, camera.position);
   }
 
   /* Лужи: заехал — занос. */
@@ -423,7 +478,8 @@
         var along = Math.abs(track.norm(r.dist - p.dist + track.length / 2) - track.length / 2);
         if (along > p.radius) continue;
         if (Math.abs(r.lane - p.lane) > p.radius * 0.8) continue;
-        r.skid = (Math.random() < 0.5 ? -1 : 1) * (2.6 + r.speed * 0.09);
+        var wetBonus = storm.kind === 'rain' ? 1 + storm.level * 0.6 : 1;
+        r.skid = (Math.random() < 0.5 ? -1 : 1) * (2.6 + r.speed * 0.09) * wetBonus;
         r.puddleCooldown = 2.2;
         var d = camera.position.distanceTo(r.mesh.position);
         sfx.splash(Math.max(0, 1 - d / 120));
@@ -1153,7 +1209,8 @@
       // Внимание: track.sideAt() смотрит ВЛЕВО от движения, поэтому
       // «вправо» (steer = +1) — это уменьшение полосы.
       // В заносе после лужи и в полёте руль почти бесполезен.
-      var grip = (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1);
+      var wet = storm.kind === 'rain' ? storm.level : 0;
+      var grip = (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1) * (1 - wet * 0.25);
       r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * grip;
 
       if (r.skid !== 0) {
@@ -1493,6 +1550,10 @@
     ui.jail.style.opacity = f.jail > 0 ? '1' : '0';
     if (f.jail > 0) ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' + f.jailReason;
     ui.storm.style.opacity = storm.level > 0.25 ? '1' : '0';
+    if (storm.level > 0.25) {
+      ui.storm.textContent = storm.kind === 'rain' ? '🌧 ЛИВЕНЬ' : '🌪 ПЕСЧАНАЯ БУРЯ';
+      ui.storm.classList.toggle('rain', storm.kind === 'rain');
+    }
 
     // состояние каждого игрока
     for (var h = 0; h < ui.pedals.length; h++) {
@@ -1868,10 +1929,10 @@
     });
     document.getElementById('adm-kill').addEventListener('click', killBot);
     document.getElementById('adm-storm').addEventListener('click', function () {
-      storm.active = true;
-      storm.left = 12;
-      sfx.startWind();
-      flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
+      startWeather('sand');
+    });
+    document.getElementById('adm-rain').addEventListener('click', function () {
+      startWeather('rain');
     });
     document.getElementById('adm-heli').addEventListener('click', function () {
       var f = focusRacer();
@@ -2021,7 +2082,7 @@
         };
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
-      storm: { active: storm.active, level: +storm.level.toFixed(2) },
+      storm: { active: storm.active, kind: storm.kind, level: +storm.level.toFixed(2) },
       heli: heli ? heli.active : false,
       police: police.filter(function (c) { return c.active; }).map(function (c) {
         return { dist: Math.round(c.dist), lane: +c.lane.toFixed(1), left: +c.timer.toFixed(1) };

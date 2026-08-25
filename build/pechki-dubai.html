@@ -162,6 +162,7 @@
     background: rgba(190,130,40,0.9); border-radius: 12px;
     font-size: 13.5px; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap;
   }
+  #storm-warn.rain { background: rgba(52,96,140,0.92); }
   #jail-warn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     padding: 14px 26px; opacity: 0; transition: opacity .3s;
@@ -316,7 +317,10 @@
       <button id="adm-finish">Закончить гонку</button>
     </div>
     <div class="arow">
-      <button id="adm-storm">Начать бурю</button>
+      <button id="adm-storm">Песчаная буря</button>
+      <button id="adm-rain">Ливень</button>
+    </div>
+    <div class="arow">
       <button id="adm-heli">Вертолёт</button>
     </div>
     <div class="arow">
@@ -828,6 +832,56 @@
     this.rotor.gain.setTargetAtTime(Math.max(0, level) * 0.5, this.ctx.currentTime, 0.2);
   };
 
+  /* Шум ливня и раскаты грома. */
+  Sfx.prototype.startRain = function () {
+    this.init();
+    if (!this.ctx || this.rain) return this.rain;
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 900;
+    var lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 6500;
+    var g = this.ctx.createGain();
+    g.gain.value = 0;
+    src.connect(hp).connect(lp).connect(g).connect(this.master);
+    src.start();
+    this.rain = g;
+    return g;
+  };
+
+  Sfx.prototype.setRain = function (level) {
+    if (!this.rain || !this.ctx) return;
+    this.rain.gain.setTargetAtTime(Math.max(0, level) * 0.34, this.ctx.currentTime, 0.3);
+  };
+
+  Sfx.prototype.thunder = function (vol) {
+    this.init();
+    if (!this.ctx || !vol) return;
+    var t = this.ctx.currentTime;
+    // треск разряда
+    this.noise(0.35, 0.2 * vol, 2600);
+    // низкий раскат
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(320, t);
+    lp.frequency.exponentialRampToValueAtTime(70, t + 2.2);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.42 * vol, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.08 * vol, t + 1.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+    src.connect(lp).connect(g).connect(this.master);
+    src.start(t);
+    src.stop(t + 2.5);
+  };
+
   Sfx.prototype.beep = function (freq, dur, gain) {
     this.init();
     if (!this.ctx) return;
@@ -1237,6 +1291,69 @@
     }, 70, 70);
   };
 
+  World.snowTexture = function () {
+    return canvasTexture(256, 256, function (g, w, h) {
+      g.fillStyle = '#eef2f7';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 6000; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.7)' : 'rgba(186,201,222,0.35)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      }
+      // наметённые волны
+      for (var k = 0; k < 26; k++) {
+        g.strokeStyle = 'rgba(176,194,218,0.3)';
+        g.lineWidth = 2 + Math.random() * 5;
+        g.beginPath();
+        var y = Math.random() * h;
+        g.moveTo(0, y);
+        g.bezierCurveTo(w * 0.3, y + 16, w * 0.7, y - 16, w, y + 4);
+        g.stroke();
+      }
+    }, 60, 60);
+  };
+
+  World.grassTexture = function () {
+    return canvasTexture(256, 256, function (g, w, h) {
+      g.fillStyle = '#6f8a4a';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 9000; i++) {
+        var v = Math.random();
+        g.fillStyle = v > 0.66 ? 'rgba(140,168,92,0.5)'
+          : (v > 0.33 ? 'rgba(86,110,58,0.5)' : 'rgba(178,186,120,0.35)');
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 3);
+      }
+      for (var k = 0; k < 22; k++) {
+        g.fillStyle = 'rgba(120,140,80,0.35)';
+        g.beginPath();
+        g.ellipse(Math.random() * w, Math.random() * h, 20 + Math.random() * 40,
+          12 + Math.random() * 24, Math.random(), 0, Math.PI * 2);
+        g.fill();
+      }
+    }, 70, 70);
+  };
+
+  World.urbanGroundTexture = function () {
+    return canvasTexture(256, 256, function (g, w, h) {
+      g.fillStyle = '#8d8f93';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 5000; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(190,192,198,0.3)' : 'rgba(96,98,104,0.3)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      }
+      g.strokeStyle = 'rgba(70,72,78,0.45)';
+      g.lineWidth = 2;
+      for (var x = 0; x < w; x += 64) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+      for (var y = 0; y < h; y += 64) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+    }, 55, 55);
+  };
+
+  World.groundTexture = function (kind) {
+    if (kind === 'snow') return World.snowTexture();
+    if (kind === 'grass') return World.grassTexture();
+    if (kind === 'urban') return World.urbanGroundTexture();
+    return World.sandTexture();
+  };
+
   /* Дорога: разметка запечена в текстуру. U — поперёк полотна, V — вдоль. */
   World.roadTexture = function (lengthMeters) {
     return canvasTexture(256, 256, function (g, w, h) {
@@ -1400,6 +1517,148 @@
         }
         grime(g, w, h, 0.09);
 
+      } else if (style === 'stalin') {
+        // сталинский ампир: охра, пилястры, высокие окна, лепной карниз
+        g.fillStyle = '#d8c8a8';
+        g.fillRect(0, 0, w, h);
+        noiseOverlay(g, w, h, 2200, 'rgba(255,250,232,0.35)', 'rgba(150,130,96,0.25)');
+        for (var r5 = 0; r5 < rows; r5++) {
+          var y5 = r5 * ch;
+          for (var c6 = 0; c6 < cols; c6++) {
+            var x6 = c6 * cw;
+            g.fillStyle = 'rgba(120,102,74,0.5)';
+            g.fillRect(x6 + 6, y5 + 5, cw - 12, ch - 12);
+            var lit5 = Math.random();
+            g.fillStyle = lit5 > 0.75 ? '#ffe0a8' : (lit5 > 0.45 ? '#6f8496' : '#3f4c58');
+            g.fillRect(x6 + 8, y5 + 7, cw - 16, ch - 16);
+            g.fillStyle = 'rgba(246,238,218,0.9)';      // наличник
+            g.fillRect(x6 + 4, y5 + 3, cw - 8, 3);
+          }
+          g.fillStyle = 'rgba(198,178,140,0.85)';
+          g.fillRect(0, y5 + ch - 5, w, 5);
+        }
+        // пилястры
+        for (var pz = 0; pz <= cols; pz += 2) {
+          g.fillStyle = 'rgba(226,212,180,0.75)';
+          g.fillRect(pz * cw - 3, 0, 6, h);
+        }
+        g.fillStyle = '#c8b184';
+        g.fillRect(0, 0, w, 14);
+        g.fillStyle = 'rgba(255,250,235,0.6)';
+        for (var dz = 6; dz < w; dz += 16) g.fillRect(dz, 3, 8, 8);
+        grime(g, w, h, 0.1);
+
+      } else if (style === 'panel') {
+        // панельный дом: швы, балконы, мелкие окна
+        g.fillStyle = '#c9cbc6';
+        g.fillRect(0, 0, w, h);
+        noiseOverlay(g, w, h, 2000, 'rgba(240,242,238,0.4)', 'rgba(126,130,126,0.3)');
+        for (var r6 = 0; r6 < rows; r6++) {
+          var y6 = r6 * ch;
+          for (var c7 = 0; c7 < cols; c7++) {
+            var x7 = c7 * cw;
+            var lit6 = Math.random();
+            g.fillStyle = lit6 > 0.72 ? '#ffdca0' : (lit6 > 0.45 ? '#7f95a4' : '#404a54');
+            g.fillRect(x7 + 5, y6 + 6, cw - 10, ch - 16);
+            if (Math.random() > 0.6) {                  // застеклённый балкон
+              g.fillStyle = 'rgba(196,204,200,0.9)';
+              g.fillRect(x7 + 3, y6 + ch - 12, cw - 6, 8);
+            }
+          }
+          g.strokeStyle = 'rgba(120,124,120,0.7)';       // шов панели
+          g.lineWidth = 2;
+          g.beginPath(); g.moveTo(0, y6 + ch - 2); g.lineTo(w, y6 + ch - 2); g.stroke();
+        }
+        for (var sv = 0; sv <= cols; sv += 2) {
+          g.strokeStyle = 'rgba(120,124,120,0.55)';
+          g.beginPath(); g.moveTo(sv * cw, 0); g.lineTo(sv * cw, h); g.stroke();
+        }
+        grime(g, w, h, 0.14);
+
+      } else if (style === 'brick') {
+        // кирпичный дом с белыми наличниками
+        g.fillStyle = '#a8563c';
+        g.fillRect(0, 0, w, h);
+        var bh2 = 7, bw2 = 18;
+        for (var row2 = 0; row2 * bh2 < h; row2++) {
+          var off2 = (row2 % 2) * bw2 / 2;
+          for (var x8 = -bw2; x8 < w + bw2; x8 += bw2) {
+            g.fillStyle = 'rgba(255,255,255,' + (0.04 + Math.random() * 0.1) + ')';
+            g.fillRect(x8 + off2 + 1, row2 * bh2 + 1, bw2 - 2, bh2 - 2);
+          }
+        }
+        for (var r7 = 0; r7 < rows; r7++) {
+          for (var c8 = 0; c8 < cols; c8++) {
+            var x9 = c8 * cw, y7 = r7 * ch;
+            g.fillStyle = '#f0ece0';
+            g.fillRect(x9 + 4, y7 + 5, cw - 8, ch - 12);
+            var lit7 = Math.random();
+            g.fillStyle = lit7 > 0.72 ? '#ffe2ab' : (lit7 > 0.4 ? '#5f7484' : '#33404c');
+            g.fillRect(x9 + 7, y7 + 8, cw - 14, ch - 18);
+          }
+        }
+        grime(g, w, h, 0.12);
+
+      } else if (style === 'neon') {
+        // токийский фасад: тёмное стекло и вертикальные вывески
+        g.fillStyle = '#2b2f38';
+        g.fillRect(0, 0, w, h);
+        noiseOverlay(g, w, h, 1500, 'rgba(120,140,160,0.2)', 'rgba(10,12,16,0.4)');
+        for (var r8 = 0; r8 < rows; r8++) {
+          for (var c9 = 0; c9 < cols; c9++) {
+            var xa = c9 * cw, ya = r8 * ch;
+            var lit8 = Math.random();
+            g.fillStyle = lit8 > 0.62 ? 'rgba(190,225,255,0.75)' : 'rgba(40,52,66,0.9)';
+            g.fillRect(xa + 3, ya + 4, cw - 6, ch - 10);
+          }
+        }
+        var neon = ['#ff3d6e', '#38e0d0', '#ffd23f', '#7c4dff', '#4dff88'];
+        for (var nsign = 0; nsign < 5; nsign++) {
+          var nx = Math.random() * (w - 26);
+          var ny = Math.random() * (h - 120);
+          var nh = 60 + Math.random() * 60;
+          var col = neon[Math.floor(Math.random() * neon.length)];
+          g.fillStyle = col;
+          g.globalAlpha = 0.9;
+          g.fillRect(nx, ny, 22, nh);
+          g.globalAlpha = 1;
+          g.fillStyle = 'rgba(0,0,0,0.55)';
+          for (var ch2 = 0; ch2 < nh - 12; ch2 += 18) {
+            g.fillRect(nx + 5, ny + 6 + ch2, 12, 10);
+          }
+        }
+
+      } else if (style === 'haussmann') {
+        // парижский дом: кремовый камень, балконы с ковкой, мансарда
+        g.fillStyle = '#e2d8c4';
+        g.fillRect(0, 0, w, h);
+        noiseOverlay(g, w, h, 2000, 'rgba(255,252,242,0.4)', 'rgba(160,148,124,0.25)');
+        for (var r9 = 0; r9 < rows; r9++) {
+          var yb = r9 * ch;
+          for (var ca = 0; ca < cols; ca++) {
+            var xb = ca * cw;
+            g.fillStyle = '#c8bca4';
+            g.fillRect(xb + 5, yb + 4, cw - 10, ch - 12);
+            var lit9 = Math.random();
+            g.fillStyle = lit9 > 0.74 ? '#ffe6b8' : (lit9 > 0.45 ? '#6b7f92' : '#3a4652');
+            g.fillRect(xb + 7, yb + 6, cw - 14, ch - 16);
+          }
+          // кованый балкон через этаж
+          if (r9 % 2 === 1) {
+            g.fillStyle = 'rgba(48,50,54,0.85)';
+            g.fillRect(0, yb + ch - 11, w, 3);
+            for (var bx2 = 2; bx2 < w; bx2 += 6) g.fillRect(bx2, yb + ch - 11, 2, 7);
+          }
+          g.fillStyle = 'rgba(238,230,214,0.9)';
+          g.fillRect(0, yb + ch - 4, w, 4);
+        }
+        // мансарда сверху тайла
+        g.fillStyle = '#4a4f57';
+        g.fillRect(0, 0, w, 26);
+        g.fillStyle = '#8b929c';
+        for (var mx = 8; mx < w; mx += 32) g.fillRect(mx, 6, 14, 14);
+        grime(g, w, h, 0.08);
+
       } else {
         // зеркальное стекло: небо сверху, город снизу
         var base = g.createLinearGradient(0, 0, 0, h);
@@ -1447,27 +1706,23 @@
   World.SUN_UV = { u: 0.895, v: 0.227 };
   World.SUN_DIR = new THREE.Vector3(-0.52, 0.755, -0.41);
 
-  World.skyTexture = function () {
+  World.skyTexture = function (theme) {
+    theme = theme || World.THEMES.dubai;
     return canvasTexture(1024, 512, function (g, w, h) {
       var grd = g.createLinearGradient(0, 0, 0, h);
-      grd.addColorStop(0.00, '#0b3372');
-      grd.addColorStop(0.18, '#245fa8');
-      grd.addColorStop(0.36, '#4a8cc9');
-      grd.addColorStop(0.52, '#84badb');
-      grd.addColorStop(0.66, '#c2d3d3');
-      grd.addColorStop(0.78, '#e0caa0');
-      grd.addColorStop(0.90, '#dcb379');
-      grd.addColorStop(1.00, '#c4945c');
+      for (var st = 0; st < theme.sky.length; st++) {
+        grd.addColorStop(theme.sky[st][0], theme.sky[st][1]);
+      }
       g.fillStyle = grd;
       g.fillRect(0, 0, w, h);
 
       // перистые облака: вытянутые мазки на нескольких высотах
-      for (var i = 0; i < 90; i++) {
+      for (var i = 0; i < theme.clouds; i++) {
         var cy = h * (0.16 + Math.random() * 0.36);
         var cx = Math.random() * w;
         var len = 60 + Math.random() * 320;
         var thick = 3 + Math.random() * 12;
-        var alpha = 0.05 + Math.random() * 0.16;
+        var alpha = 0.05 + Math.random() * theme.cloudAlpha;
         var cl = g.createLinearGradient(cx - len / 2, cy, cx + len / 2, cy);
         cl.addColorStop(0, 'rgba(255,255,255,0)');
         cl.addColorStop(0.5, 'rgba(255,255,255,' + alpha + ')');
@@ -1480,9 +1735,9 @@
 
       // пыльная дымка над горизонтом
       var haze = g.createLinearGradient(0, h * 0.58, 0, h * 0.92);
-      haze.addColorStop(0, 'rgba(226,206,170,0)');
-      haze.addColorStop(0.6, 'rgba(226,206,170,0.24)');
-      haze.addColorStop(1, 'rgba(214,182,133,0.42)');
+      haze.addColorStop(0, theme.haze + '0)');
+      haze.addColorStop(0.6, theme.haze + '0.24)');
+      haze.addColorStop(1, theme.haze + '0.45)');
       g.fillStyle = haze;
       g.fillRect(0, h * 0.58, w, h * 0.34);
 
@@ -1745,7 +2000,7 @@
   };
 
   World.shoulderMesh = function (track) {
-    var mat = new THREE.MeshLambertMaterial({ color: 0xbda574 });
+    var mat = new THREE.MeshLambertMaterial({ color: World.theme.shoulder });
     return ribbon(track, track.width / 2 + 5, 0.008, mat, 500);
   };
 
@@ -1776,7 +2031,7 @@
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0xc7ab7b }));
+    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: World.theme.embankment }));
   };
 
   /* Насколько далеко от осевой начинается ровный песок в этом месте. */
@@ -1930,23 +2185,102 @@
 
   /* ---------- Город ---------- */
 
-  World.buildCity = function (track, scene) {
+  /* ---------- Города ---------- */
+
+  World.THEMES = {
+    dubai: {
+      id: 'dubai', title: 'Дубай', hint: 'песок, небоскрёбы, Бурдж-Халифа',
+      ground: 'sand', groundTint: 0xffffff,
+      shoulder: 0xbda574, embankment: 0xc7ab7b,
+      sky: [[0.00,'#0b3372'],[0.18,'#245fa8'],[0.36,'#4a8cc9'],[0.52,'#84badb'],
+            [0.66,'#c2d3d3'],[0.78,'#e0caa0'],[0.90,'#dcb379'],[1.00,'#c4945c']],
+      haze: 'rgba(226,206,170,', clouds: 90, cloudAlpha: 0.16,
+      fog: 0xcbb489, clear: 0xbcd3e6, fogDensity: 0.0013,
+      facades: ['glass', 'sand', 'white', 'stripe'],
+      heights: [26, 190], capColor: 0x8d9aa6,
+      trees: 'palm', treeCount: 96, dunes: true,
+      weather: ['sand', 'rain'],
+      landmarks: 'dubai'
+    },
+    moscow: {
+      id: 'moscow', title: 'Москва', hint: 'снег, сталинки, Кремль',
+      ground: 'snow', groundTint: 0xffffff,
+      shoulder: 0xd7dee8, embankment: 0xc6cfdb,
+      sky: [[0.00,'#2a3f63'],[0.20,'#4f6b93'],[0.40,'#7e97b8'],[0.58,'#aebccb'],
+            [0.72,'#c9d2da'],[0.86,'#dde2e6'],[1.00,'#e8ebee']],
+      haze: 'rgba(210,220,232,', clouds: 190, cloudAlpha: 0.3,
+      fog: 0xc3ccd8, clear: 0xaebccb, fogDensity: 0.0019,
+      facades: ['stalin', 'panel', 'brick', 'white'],
+      heights: [22, 90], capColor: 0x9aa3ad,
+      trees: 'birch', treeCount: 90, spruces: true, dunes: false,
+      weather: ['snow', 'rain'],
+      landmarks: 'moscow'
+    },
+    yoshkar: {
+      id: 'yoshkar', title: 'Йошкар-Ола', hint: 'набережная Брюгге и ёлки',
+      ground: 'snow', groundTint: 0xf6f2ea,
+      shoulder: 0xd9dfe6, embankment: 0xcad2dc,
+      sky: [[0.00,'#33507e'],[0.20,'#5c7fab'],[0.40,'#8ba7c6'],[0.58,'#bfcedb'],
+            [0.74,'#dfe4e6'],[0.88,'#efe6d8'],[1.00,'#f2e6d0']],
+      haze: 'rgba(224,228,232,', clouds: 150, cloudAlpha: 0.26,
+      fog: 0xd2d8e0, clear: 0xbfcedb, fogDensity: 0.0017,
+      facades: ['brick', 'panel', 'stalin', 'white'],
+      heights: [16, 46], capColor: 0xa8b0b8,
+      trees: 'spruce', treeCount: 86, dunes: false,
+      weather: ['snow', 'rain'],
+      landmarks: 'yoshkar'
+    },
+    tokyo: {
+      id: 'tokyo', title: 'Токио', hint: 'неон, сакура, Токийская башня',
+      ground: 'urban', groundTint: 0xffffff,
+      shoulder: 0x9a9ca2, embankment: 0x8c8e94,
+      sky: [[0.00,'#1a2748'],[0.18,'#39456e'],[0.36,'#6a6392'],[0.52,'#a97a9a'],
+            [0.68,'#e0929a'],[0.82,'#f2b790'],[1.00,'#f6d3a6']],
+      haze: 'rgba(240,200,180,', clouds: 110, cloudAlpha: 0.2,
+      fog: 0xa88fa0, clear: 0x8f7f9c, fogDensity: 0.0016,
+      facades: ['neon', 'glass', 'white', 'stripe'],
+      heights: [24, 170], capColor: 0x7f858f,
+      trees: 'sakura', treeCount: 92, dunes: false,
+      weather: ['rain', 'rain', 'sand'],
+      landmarks: 'tokyo'
+    },
+    paris: {
+      id: 'paris', title: 'Париж', hint: 'османовские дома и Эйфелева башня',
+      ground: 'grass', groundTint: 0xffffff,
+      shoulder: 0xb9b49a, embankment: 0xa9a98c,
+      sky: [[0.00,'#1c4f8f'],[0.20,'#3e7ab6'],[0.40,'#7ba7cf'],[0.58,'#b3cadd'],
+            [0.74,'#d8dfdf'],[0.88,'#ece4d2'],[1.00,'#e6d9bd']],
+      haze: 'rgba(226,226,214,', clouds: 140, cloudAlpha: 0.24,
+      fog: 0xc9ccc0, clear: 0xb3cadd, fogDensity: 0.0015,
+      facades: ['haussmann', 'white', 'stripe', 'brick'],
+      heights: [18, 52], capColor: 0x6c7079,
+      trees: 'plane', treeCount: 94, dunes: false,
+      weather: ['rain', 'rain', 'snow'],
+      landmarks: 'paris'
+    }
+  };
+
+  World.theme = World.THEMES.dubai;
+
+  World.buildCity = function (track, scene, theme) {
+    theme = theme || World.THEMES.dubai;
+    World.theme = theme;
     var group = new THREE.Group();
     scene.add(group);
 
-    // песок
-    var sand = new THREE.Mesh(
+    // земля: песок, снег, трава или городской бетон
+    var ground = new THREE.Mesh(
       new THREE.PlaneGeometry(4000, 4000),
-      new THREE.MeshLambertMaterial({ map: World.sandTexture() })
+      new THREE.MeshLambertMaterial({ map: World.groundTexture(theme.ground), color: theme.groundTint })
     );
-    sand.rotation.x = -Math.PI / 2;
-    sand.position.y = -0.05;
-    group.add(sand);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.05;
+    group.add(ground);
 
-    // небо: панорама на сфере, её же подкрашиваем в бурю
+    // небо: панорама на сфере, её же подкрашиваем в непогоду
     var sky = new THREE.Mesh(
       new THREE.SphereGeometry(1800, 32, 20),
-      new THREE.MeshBasicMaterial({ map: World.skyTexture(), side: THREE.BackSide,
+      new THREE.MeshBasicMaterial({ map: World.skyTexture(theme), side: THREE.BackSide,
         depthWrite: false, fog: false })
     );
     group.add(sky);
@@ -1996,7 +2330,8 @@
       var plx = ppp.x + pnn.x * 105, plz = ppp.z + pnn.z * 105;
       if ((x - plx) * (x - plx) + (z - plz) * (z - plz) < 95 * 95) continue;      // двор дворца
 
-      var h = 26 + Math.random() * Math.random() * 190 + (near < 90 ? 0 : 30);
+      var hmin = theme.heights[0], hspan = theme.heights[1];
+      var h = hmin + Math.random() * Math.random() * hspan + (near < 90 ? 0 : hmin * 0.6);
       var bw = 12 + Math.random() * 24;
       var bd = 12 + Math.random() * 24;
 
@@ -2023,12 +2358,13 @@
       }
       placed++;
     }
-    var STYLES = ['glass', 'sand', 'white', 'stripe'];
+    var STYLES = theme.facades;
     for (var b2 = 0; b2 < BUCKETS; b2++) {
       if (!buckets[b2].length) continue;
       var tex = World.facadeTexture(STYLES[b2 % STYLES.length]);
       // стеклянные фасады бликуют на солнце, каменные — нет
-      var glassy = STYLES[b2 % STYLES.length] !== 'sand';
+      var st = STYLES[b2 % STYLES.length];
+      var glassy = st === 'glass' || st === 'neon' || st === 'stripe' || st === 'white';
       var mat = glassy
         ? new THREE.MeshPhongMaterial({ map: tex, emissiveMap: tex, emissive: 0x1a1712,
             specular: 0x6a7c8c, shininess: 42 })
@@ -2037,42 +2373,77 @@
     }
     if (capGeos.length) {
       group.add(new THREE.Mesh(World.mergeGeometries(capGeos),
-        new THREE.MeshLambertMaterial({ color: 0x8d9aa6 })));
+        new THREE.MeshLambertMaterial({ color: theme.capColor })));
     }
 
-    // Бурдж-Халифа стоит у самой финишной прямой
+    // Достопримечательности: одна у финиша, одна на дальней стороне круга
     var fin = track.pointAt(0);
     var fside = track.sideAt(0);
-    var burj = new THREE.Vector3(fin.x, 0, fin.z).addScaledVector(fside, -82);
-    World.burjPosition = burj.clone();
-    World.buildBurj(group, burj.x, burj.z);
-
-    // Дворец шейха на дальней стороне круга
+    var spotA = new THREE.Vector3(fin.x, 0, fin.z).addScaledVector(fside, -82);
     var pd = track.length * 0.52;
-    var pp = track.pointAt(pd);
+    var pp2 = track.pointAt(pd);
     var pn = track.sideAt(pd);
-    var pt = track.tangentAt(pd);
-    var palace = new THREE.Vector3(pp.x, 0, pp.z).addScaledVector(pn, 105);
-    World.buildPalace(group, palace.x, palace.z, Math.atan2(-pn.x, -pn.z));
+    var spotB = new THREE.Vector3(pp2.x, 0, pp2.z).addScaledVector(pn, 105);
+    var faceB = Math.atan2(-pn.x, -pn.z);
+    World.burjPosition = spotA.clone();
+
+    if (theme.landmarks === 'dubai') {
+      World.buildBurj(group, spotA.x, spotA.z);
+      World.buildPalace(group, spotB.x, spotB.z, faceB);
+    } else if (theme.landmarks === 'moscow') {
+      World.buildKremlin(group, spotA.x, spotA.z, Math.atan2(fside.x, fside.z));
+      World.buildPalace(group, spotB.x, spotB.z, faceB);        // усадьба вдалеке
+    } else if (theme.landmarks === 'yoshkar') {
+      World.buildFlemishRow(group, spotA.x, spotA.z, Math.atan2(fside.x, fside.z));
+      World.buildKremlin(group, spotB.x, spotB.z, faceB);
+    } else if (theme.landmarks === 'tokyo') {
+      World.buildTokyoTower(group, spotA.x, spotA.z);
+      World.buildFlemishRow(group, spotB.x, spotB.z, faceB);    // квартал у башни
+    } else if (theme.landmarks === 'paris') {
+      World.buildEiffel(group, spotA.x, spotA.z);
+      World.buildFlemishRow(group, spotB.x, spotB.z, faceB);
+    }
 
     // Пальмы вдоль трассы: стоят на песке за насыпью, поэтому отступ зависит
     // от высоты дороги в этом месте
-    var trunkGeos = [], leafGeos = [];
-    for (var i = 0; i < 120; i++) {
-      var d = track.length * i / 120 + 4;
+    var trunkGeos = [], leafGeos = [], nutGeos = [];
+    var extraTrunks = [], extraLeaves = [];
+    var count = theme.treeCount || 90;
+    for (var i = 0; i < count; i++) {
+      var d = track.length * i / count + 4;
       var p = track.pointAt(d);
       var n = track.sideAt(d);
       var sideSign = (i % 2 === 0) ? 1 : -1;
-      var off = World.roadFootprint(track, d) + 3 + Math.random() * 6;
-      var pp = p.clone().addScaledVector(n, sideSign * off);
-      World.palmGeometry(pp.x, pp.z, trunkGeos, leafGeos);
-    }
-    group.add(new THREE.Mesh(World.mergeGeometries(trunkGeos),
-      new THREE.MeshLambertMaterial({ color: 0x8a6a44 })));
-    group.add(new THREE.Mesh(World.mergeGeometries(leafGeos),
-      new THREE.MeshLambertMaterial({ color: 0x3f7d34, side: THREE.DoubleSide })));
+      var off = World.roadFootprint(track, d) + 3 + Math.random() * 7;
+      var tp = p.clone().addScaledVector(n, sideSign * off);
+      if (theme.trees === 'palm') World.palmGeometry(tp.x, tp.z, trunkGeos, leafGeos, nutGeos);
+      else World.treeGeometry(theme.trees, tp.x, tp.z, trunkGeos, leafGeos);
 
-    // Дюны
+      // в северных городах между лиственными вставляем ёлки
+      if (theme.spruces && i % 3 === 0) {
+        var off2 = off + 9 + Math.random() * 7;
+        var sp = p.clone().addScaledVector(n, sideSign * off2);
+        World.treeGeometry('spruce', sp.x, sp.z, extraTrunks, extraLeaves);
+      }
+    }
+    if (theme.trees === 'palm') {
+      var pm = World.palmMaterials();
+      group.add(new THREE.Mesh(World.mergeGeometries(trunkGeos), pm.trunk));
+      group.add(new THREE.Mesh(World.mergeGeometries(leafGeos), pm.leaf));
+      if (nutGeos.length) group.add(new THREE.Mesh(World.mergeGeometries(nutGeos), pm.nut));
+    } else {
+      var tm = World.treeMaterials(theme.trees);
+      group.add(new THREE.Mesh(World.mergeGeometries(trunkGeos), tm.trunk));
+      group.add(new THREE.Mesh(World.mergeGeometries(leafGeos), tm.leaf));
+    }
+    if (extraTrunks.length) {
+      var sm = World.treeMaterials('spruce');
+      group.add(new THREE.Mesh(World.mergeGeometries(extraTrunks), sm.trunk));
+      group.add(new THREE.Mesh(World.mergeGeometries(extraLeaves), sm.leaf));
+    }
+
+    // Дюны — только там, где вокруг пустыня
+    if (!theme.dunes) return group;
     var duneGeos = [];
     for (var k = 0; k < 34; k++) {
       var a2 = Math.random() * Math.PI * 2;
@@ -2170,15 +2541,15 @@
     group.add(pool);
 
     // пальмы по кругу площади
-    var trunks = [], leaves = [];
+    var pmb = World.palmMaterials();
+    var trunks = [], leaves = [], bnuts = [];
     for (var k = 0; k < 14; k++) {
       var a = k / 14 * Math.PI * 2;
-      World.palmGeometry(x + Math.cos(a) * 70, z + Math.sin(a) * 70, trunks, leaves);
+      World.palmGeometry(x + Math.cos(a) * 70, z + Math.sin(a) * 70, trunks, leaves, bnuts);
     }
-    group.add(new THREE.Mesh(World.mergeGeometries(trunks),
-      new THREE.MeshLambertMaterial({ color: 0x8a6a44 })));
-    group.add(new THREE.Mesh(World.mergeGeometries(leaves),
-      new THREE.MeshLambertMaterial({ color: 0x3f7d34, side: THREE.DoubleSide })));
+    group.add(new THREE.Mesh(World.mergeGeometries(trunks), pmb.trunk));
+    group.add(new THREE.Mesh(World.mergeGeometries(leaves), pmb.leaf));
+    if (bnuts.length) group.add(new THREE.Mesh(World.mergeGeometries(bnuts), pmb.nut));
 
     return { x: x, z: z, height: y + 176 };
   };
@@ -2386,44 +2757,596 @@
     root.add(jet);
 
     // пальмы вдоль стилобата
-    var trunks = [], leaves = [];
+    var pmp = World.palmMaterials();
+    var trunks = [], leaves = [], pnuts = [];
     for (var i = 0; i < 12; i++) {
       var a = i / 12 * Math.PI * 2;
-      World.palmGeometry(x + Math.cos(a) * 50, z + Math.sin(a) * 50, trunks, leaves);
+      World.palmGeometry(x + Math.cos(a) * 50, z + Math.sin(a) * 50, trunks, leaves, pnuts);
     }
-    group.add(new THREE.Mesh(World.mergeGeometries(trunks),
-      new THREE.MeshLambertMaterial({ color: 0x8a6a44 })));
-    group.add(new THREE.Mesh(World.mergeGeometries(leaves),
-      new THREE.MeshLambertMaterial({ color: 0x3f7d34, side: THREE.DoubleSide })));
+    group.add(new THREE.Mesh(World.mergeGeometries(trunks), pmp.trunk));
+    group.add(new THREE.Mesh(World.mergeGeometries(leaves), pmp.leaf));
+    if (pnuts.length) group.add(new THREE.Mesh(World.mergeGeometries(pnuts), pmp.nut));
 
     World.palacePosition = new THREE.Vector3(x, 0, z);
     return root;
   };
 
   /* Геометрия одной пальмы, разложенная по спискам «ствол» и «листья». */
-  World.palmGeometry = function (x, z, trunks, leaves) {
-    var h = 6 + Math.random() * 4;
-    var rotY = Math.random() * Math.PI;
-    var trunk = new THREE.CylinderGeometry(0.28, 0.5, h, 7);
+  /* ---------- Пальмы ---------- */
+
+  /* Кора финиковой пальмы: ромбовидные рубцы от старых листьев. */
+  World.palmBarkTexture = function () {
+    return canvasTexture(64, 128, function (g, w, h) {
+      g.fillStyle = '#8a6a44';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 1200; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(196,164,116,0.35)' : 'rgba(84,60,36,0.35)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      }
+      var rows = 10, cols = 4;
+      for (var r = 0; r < rows; r++) {
+        var off = (r % 2) * (w / cols) / 2;
+        for (var c = -1; c <= cols; c++) {
+          var cx = off + c * (w / cols) + w / cols / 2;
+          var cy = r * (h / rows) + h / rows / 2;
+          g.fillStyle = 'rgba(122,92,58,0.9)';
+          g.beginPath();
+          g.moveTo(cx, cy - 5); g.lineTo(cx + 7, cy); g.lineTo(cx, cy + 5); g.lineTo(cx - 7, cy);
+          g.closePath(); g.fill();
+          g.strokeStyle = 'rgba(60,42,26,0.5)';
+          g.lineWidth = 1;
+          g.stroke();
+          g.fillStyle = 'rgba(214,186,140,0.4)';
+          g.fillRect(cx - 6, cy - 5, 12, 1.6);
+        }
+      }
+    }, 2, 3);
+  };
+
+  /* Перистый лист: черешок и листочки по бокам, фон прозрачный. */
+  World.palmLeafTexture = function () {
+    return canvasTexture(128, 256, function (g, w, h) {
+      g.clearRect(0, 0, w, h);
+      var midX = w / 2;
+
+      // черешок сужается к концу
+      g.strokeStyle = '#4f7a2e';
+      g.lineWidth = 6;
+      g.beginPath();
+      g.moveTo(midX, 0);
+      g.lineTo(midX, h);
+      g.stroke();
+      g.strokeStyle = '#6d9c3c';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.moveTo(midX, 0);
+      g.lineTo(midX, h);
+      g.stroke();
+
+      // листочки: чем ближе к концу, тем короче и круче
+      for (var y = 8; y < h - 6; y += 7) {
+        var t = y / h;
+        var len = midX * (0.95 - t * 0.55) * (t < 0.12 ? t / 0.12 : 1);
+        var lift = 12 + t * 16;
+        var shade = 60 + Math.random() * 40;
+        for (var side = -1; side <= 1; side += 2) {
+          g.strokeStyle = 'rgb(' + Math.round(48 + shade * 0.35) + ',' +
+            Math.round(96 + shade * 0.75) + ',' + Math.round(38 + shade * 0.3) + ')';
+          g.lineWidth = 4.2;
+          g.lineCap = 'round';
+          g.beginPath();
+          g.moveTo(midX, y);
+          g.quadraticCurveTo(midX + side * len * 0.6, y + lift * 0.4,
+                             midX + side * len, y + lift);
+          g.stroke();
+        }
+      }
+    });
+  };
+
+  /* Один лист: полоска, которая поднимается от кроны и провисает к концу. */
+  function frondGeometry(len, width, tiltUp, droop) {
+    var N = 6;
+    var pos = [], uv = [], idx = [];
+    for (var i = 0; i <= N; i++) {
+      var t = i / N;
+      var along = len * t;
+      var x = Math.cos(tiltUp) * along;
+      var y = Math.sin(tiltUp) * along - droop * along * t;
+      // ширина: узко у черешка, шире в середине, острый конец
+      var wdt = width * (t < 0.15 ? t / 0.15 : 1) * (1 - t * 0.75);
+      pos.push(x, y, -wdt, x, y, wdt);
+      uv.push(0, t, 1, t);
+      if (i < N) {
+        var a = i * 2;
+        idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
+  /* Пальма: изогнутый ствол, крона из 12 листьев и гроздь фиников.
+     Геометрия раскладывается по спискам, чтобы потом склеиться в общие сетки. */
+  World.palmGeometry = function (x, z, trunks, leaves, nuts) {
+    var h = 7 + Math.random() * 4.5;
+    var rotY = Math.random() * Math.PI * 2;
+    var bend = (Math.random() - 0.5) * 1.6;          // наклон кроны вбок
+    var bendZ = (Math.random() - 0.5) * 1.2;
+
+    // ствол: гнём вершины по высоте, а не собираем из кусков
+    var trunk = new THREE.CylinderGeometry(0.26, 0.46, h, 7, 6, true);
     trunk.translate(0, h / 2, 0);
+    var tp = trunk.attributes.position;
+    for (var v = 0; v < tp.count; v++) {
+      var ty = tp.getY(v);
+      var k = ty / h;
+      var curve = k * k;                              // книзу прямой, кверху уводит
+      tp.setX(v, tp.getX(v) + bend * curve);
+      tp.setZ(v, tp.getZ(v) + bendZ * curve);
+    }
+    tp.needsUpdate = true;
+    trunk.computeVertexNormals();
+    World.scaleUV(trunk, 1, Math.max(1, Math.round(h / 3)));
+
     var mt = new THREE.Matrix4().makeRotationY(rotY);
     mt.setPosition(x, 0, z);
     trunk.applyMatrix4(mt);
     trunks.push(trunk);
 
-    for (var i = 0; i < 7; i++) {
-      var leaf = new THREE.PlaneGeometry(5.2, 1.15);
-      var a = i / 7 * Math.PI * 2;
-      var e = new THREE.Euler(0, -a, -0.5 - Math.random() * 0.25);
+    // крона сидит на конце изогнутого ствола
+    var topX = bend, topZ = bendZ, topY = h;
+    var count = 14 + Math.floor(Math.random() * 4);
+    var green = 0.85 + Math.random() * 0.3;
+
+    for (var i = 0; i < count; i++) {
+      var a = (i / count) * Math.PI * 2 + Math.random() * 0.2;
+      var young = i % 4 === 0;                        // молодые листья торчат вверх
+      var len = (young ? 2.8 : 3.7) + Math.random() * 1.3;
+      var tilt = young ? 0.75 + Math.random() * 0.35 : 0.1 + Math.random() * 0.35;
+      var droop = young ? 0.06 : 0.13 + Math.random() * 0.09;
+
+      var frond = frondGeometry(len, 0.82, tilt, droop);
+      var e = new THREE.Euler(0, -a, Math.sin(i * 2.1) * 0.18, 'YXZ');
       var ml = new THREE.Matrix4().makeRotationFromEuler(e);
-      ml.setPosition(Math.cos(a) * 2.1, h - 0.2 - Math.random() * 0.4, Math.sin(a) * 2.1);
-      leaf.applyMatrix4(ml);
-      leaf.applyMatrix4(mt);
-      leaves.push(leaf);
+      ml.setPosition(topX, topY - 0.25, topZ);
+      frond.applyMatrix4(ml);
+      frond.applyMatrix4(mt);
+      leaves.push(frond);
+    }
+
+    // сухие листья под кроной
+    for (var d = 0; d < 3; d++) {
+      var ad = Math.random() * Math.PI * 2;
+      var dry = frondGeometry(2.1 + Math.random(), 0.62, -0.55, 0.05);
+      var md = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(0, -ad, 0, 'YXZ'));
+      md.setPosition(topX, topY - 0.45, topZ);
+      dry.applyMatrix4(md);
+      dry.applyMatrix4(mt);
+      leaves.push(dry);
+    }
+
+    // гроздь фиников
+    if (nuts && Math.random() > 0.45) {
+      var cluster = 4 + Math.floor(Math.random() * 4);
+      var ca = Math.random() * Math.PI * 2;
+      for (var n = 0; n < cluster; n++) {
+        var nut = new THREE.SphereGeometry(0.16, 6, 5);
+        var nx = topX + Math.cos(ca) * (0.5 + Math.random() * 0.5);
+        var nz = topZ + Math.sin(ca) * (0.5 + Math.random() * 0.5);
+        nut.translate(nx, topY - 0.7 - Math.random() * 0.5, nz);
+        nut.applyMatrix4(mt);
+        nuts.push(nut);
+      }
     }
   };
 
-  /* ---------- Печка ---------- */
+  /* Материалы кроны и ствола общие на весь мир. */
+  World.palmMaterials = function () {
+    if (!World._palmMats) {
+      var leafTex = World.palmLeafTexture();
+      World._palmMats = {
+        trunk: new THREE.MeshLambertMaterial({ map: World.palmBarkTexture() }),
+        leaf: new THREE.MeshLambertMaterial({
+          map: leafTex, side: THREE.DoubleSide, alphaTest: 0.45, transparent: false
+        }),
+        nut: new THREE.MeshLambertMaterial({ color: 0xc9762f })
+      };
+    }
+    return World._palmMats;
+  };
+
+  /* ---------- Деревья других городов ---------- */
+
+  World.barkTexture = function (kind) {
+    return canvasTexture(64, 128, function (g, w, h) {
+      if (kind === 'birch') {
+        g.fillStyle = '#f0efe8';
+        g.fillRect(0, 0, w, h);
+        g.fillStyle = 'rgba(60,58,54,0.85)';
+        for (var i = 0; i < 26; i++) {
+          var y = Math.random() * h;
+          var len = 6 + Math.random() * 18;
+          g.fillRect(Math.random() * w, y, len, 3 + Math.random() * 3);
+        }
+        g.fillStyle = 'rgba(180,175,160,0.4)';
+        for (var k = 0; k < 300; k++) g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      } else {
+        g.fillStyle = kind === 'plane' ? '#9a9a86' : '#6b4f35';
+        g.fillRect(0, 0, w, h);
+        for (var j = 0; j < 900; j++) {
+          g.fillStyle = Math.random() > 0.5 ? 'rgba(230,224,206,0.3)' : 'rgba(50,38,26,0.35)';
+          g.fillRect(Math.random() * w, Math.random() * h, 3, 5);
+        }
+        if (kind === 'plane') {                    // пятнистая кора платана
+          for (var p = 0; p < 26; p++) {
+            g.fillStyle = 'rgba(214,208,186,0.55)';
+            g.beginPath();
+            g.ellipse(Math.random() * w, Math.random() * h, 5 + Math.random() * 7,
+              7 + Math.random() * 9, Math.random(), 0, Math.PI * 2);
+            g.fill();
+          }
+        }
+      }
+    }, 1, 2);
+  };
+
+  /* Лиственное дерево или ёлка. Геометрия кладётся в общие списки. */
+  World.treeGeometry = function (kind, x, z, trunks, leaves) {
+    var rot = new THREE.Matrix4().makeRotationY(Math.random() * Math.PI * 2);
+    rot.setPosition(x, 0, z);
+
+    if (kind === 'spruce') {
+      var th = 1.2 + Math.random() * 0.6;
+      var trunk = new THREE.CylinderGeometry(0.16, 0.28, th, 6);
+      trunk.translate(0, th / 2, 0);
+      trunk.applyMatrix4(rot);
+      trunks.push(trunk);
+      var levels = 4 + Math.floor(Math.random() * 2);
+      var y = th * 0.7, r = 2.2 + Math.random() * 0.8;
+      for (var i = 0; i < levels; i++) {
+        var cone = new THREE.ConeGeometry(r, 2.6, 9);
+        cone.translate(0, y + 1.3, 0);
+        cone.applyMatrix4(rot);
+        leaves.push(cone);
+        y += 1.5;
+        r *= 0.76;
+      }
+      return;
+    }
+
+    var h = kind === 'birch' ? 7 + Math.random() * 3 : 5.5 + Math.random() * 2.5;
+    var rBot = kind === 'birch' ? 0.24 : 0.34;
+    var trunk2 = new THREE.CylinderGeometry(rBot * 0.6, rBot, h, 7);
+    trunk2.translate(0, h / 2, 0);
+    World.scaleUV(trunk2, 1, Math.max(1, Math.round(h / 3)));
+    trunk2.applyMatrix4(rot);
+    trunks.push(trunk2);
+
+    // ветки
+    for (var b = 0; b < 3; b++) {
+      var br = new THREE.CylinderGeometry(0.06, 0.1, 1.6, 5);
+      var e = new THREE.Euler(0, Math.random() * 6.28, 0.9 + Math.random() * 0.3);
+      var mb = new THREE.Matrix4().makeRotationFromEuler(e);
+      mb.setPosition(0, h * (0.6 + b * 0.12), 0);
+      br.applyMatrix4(mb);
+      br.applyMatrix4(rot);
+      trunks.push(br);
+    }
+
+    // крона из нескольких шаров
+    var blobs = kind === 'birch' ? 4 : 5;
+    for (var c = 0; c < blobs; c++) {
+      var rad = (kind === 'plane' ? 2.4 : 1.9) * (0.7 + Math.random() * 0.5);
+      var blob = new THREE.SphereGeometry(rad, 9, 7);
+      var ms = new THREE.Matrix4().makeScale(1, kind === 'birch' ? 1.25 : 0.85, 1);
+      ms.setPosition((Math.random() - 0.5) * 2.4, h + 0.6 + Math.random() * 1.6,
+        (Math.random() - 0.5) * 2.4);
+      blob.applyMatrix4(ms);
+      blob.applyMatrix4(rot);
+      leaves.push(blob);
+    }
+  };
+
+  World.treeMaterials = function (kind) {
+    var key = '_tree_' + kind;
+    if (!World[key]) {
+      var leafColor = kind === 'sakura' ? 0xf3b6cf
+        : (kind === 'spruce' ? 0x2f5c38 : (kind === 'plane' ? 0x6d8f45 : 0x86a84e));
+      World[key] = {
+        trunk: kind === 'spruce'
+          ? new THREE.MeshLambertMaterial({ color: 0x5a4230 })
+          : new THREE.MeshLambertMaterial({ map: World.barkTexture(kind) }),
+        leaf: new THREE.MeshLambertMaterial({ color: leafColor })
+      };
+    }
+    return World[key];
+  };
+
+  /* ---------- Достопримечательности городов ---------- */
+
+  /* Эйфелева башня: четыре гнутые опоры, две площадки, шпиль. */
+  World.buildEiffel = function (group, x, z) {
+    var iron = new THREE.MeshLambertMaterial({ color: 0x8a7a63 });
+    var parts = [];
+    var H = 300;
+
+    function legAt(sx, sz) {
+      var segs = 14;
+      for (var i = 0; i < segs; i++) {
+        var t0 = i / segs, t1 = (i + 1) / segs;
+        // профиль сужается по экспоненте, как у настоящей башни
+        var s0 = Math.pow(1 - t0, 1.7), s1 = Math.pow(1 - t1, 1.7);
+        var y0 = t0 * H * 0.78, y1 = t1 * H * 0.78;
+        var r0 = 32 * s0 + 1.5, r1 = 32 * s1 + 1.5;
+        var thick = 2.6 * (0.35 + s0);
+        var len = Math.sqrt((y1 - y0) * (y1 - y0) + (r0 - r1) * (r0 - r1) * 2);
+        var beam = new THREE.CylinderGeometry(thick * 0.7, thick, len, 5);
+        var midR = (r0 + r1) / 2;
+        var e = new THREE.Euler(sz * Math.atan2((r0 - r1), (y1 - y0)) * 0.9, 0,
+          -sx * Math.atan2((r0 - r1), (y1 - y0)) * 0.9);
+        var m = new THREE.Matrix4().makeRotationFromEuler(e);
+        m.setPosition(sx * midR, (y0 + y1) / 2, sz * midR);
+        beam.applyMatrix4(m);
+        parts.push(beam);
+      }
+    }
+    legAt(1, 1); legAt(1, -1); legAt(-1, 1); legAt(-1, -1);
+
+    // арки между опорами и площадки
+    for (var lvl = 0; lvl < 3; lvl++) {
+      var ly = [40, 105, 195][lvl];
+      var lr = [26, 16, 7][lvl];
+      var deck = new THREE.BoxGeometry(lr * 2.6, 3, lr * 2.6);
+      deck.translate(0, ly, 0);
+      parts.push(deck);
+      var rail = new THREE.TorusGeometry(lr * 1.35, 0.5, 6, 4);
+      var mr = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      mr.setPosition(0, ly + 2.5, 0);
+      rail.applyMatrix4(mr);
+      parts.push(rail);
+    }
+
+    // решётчатые крестовины
+    for (var cx = 0; cx < 22; cx++) {
+      var cy = 10 + cx * 9;
+      var scale = Math.pow(1 - cy / (H * 0.78), 1.7);
+      var half = 32 * scale + 1.5;
+      if (half < 2) continue;
+      for (var d = 0; d < 4; d++) {
+        var brace = new THREE.BoxGeometry(half * 2.6, 0.8, 0.8);
+        var mm = new THREE.Matrix4().makeRotationY(d * Math.PI / 2);
+        var tilt = new THREE.Matrix4().makeRotationZ((cx % 2 ? 1 : -1) * 0.5);
+        mm.multiply(tilt);
+        mm.setPosition(0, cy, 0);
+        brace.applyMatrix4(mm);
+        parts.push(brace);
+      }
+    }
+
+    var spire = new THREE.CylinderGeometry(0.5, 3, H * 0.22, 8);
+    spire.translate(0, H * 0.78 + H * 0.11, 0);
+    parts.push(spire);
+    var tip = new THREE.SphereGeometry(1.6, 8, 6);
+    tip.translate(0, H, 0);
+    parts.push(tip);
+
+    var mesh = new THREE.Mesh(World.mergeGeometries(parts), iron);
+    mesh.position.set(x, 0, z);
+    group.add(mesh);
+    return mesh;
+  };
+
+  /* Токийская башня: красно-белая решётка с антенной. */
+  World.buildTokyoTower = function (group, x, z) {
+    var red = new THREE.MeshLambertMaterial({ color: 0xd94436 });
+    var white = new THREE.MeshLambertMaterial({ color: 0xf2f2ef });
+    var redParts = [], whiteParts = [];
+    var H = 250;
+
+    for (var i = 0; i < 16; i++) {
+      var t0 = i / 16, t1 = (i + 1) / 16;
+      var s0 = Math.pow(1 - t0, 1.5), s1 = Math.pow(1 - t1, 1.5);
+      var y0 = t0 * H * 0.7, y1 = t1 * H * 0.7;
+      var r0 = 28 * s0 + 2, r1 = 28 * s1 + 2;
+      for (var c = 0; c < 4; c++) {
+        var ang = c * Math.PI / 2 + Math.PI / 4;
+        var len = Math.hypot(y1 - y0, (r0 - r1) * 1.4);
+        var beam = new THREE.CylinderGeometry(1.6, 2, len, 5);
+        var e = new THREE.Euler(0, 0, Math.atan2(r0 - r1, y1 - y0));
+        var m = new THREE.Matrix4().makeRotationFromEuler(e);
+        var midR = (r0 + r1) / 2;
+        m.setPosition(Math.cos(ang) * midR, (y0 + y1) / 2, Math.sin(ang) * midR);
+        var rotAxis = new THREE.Matrix4().makeRotationY(-ang);
+        var mm = new THREE.Matrix4().makeRotationY(ang).multiply(
+          new THREE.Matrix4().makeRotationFromEuler(e));
+        mm.setPosition(Math.cos(ang) * midR, (y0 + y1) / 2, Math.sin(ang) * midR);
+        beam.applyMatrix4(mm);
+        (i % 2 ? whiteParts : redParts).push(beam);
+      }
+      // пояс
+      var band = new THREE.TorusGeometry(r1 * 1.35, 0.9, 5, 4);
+      var mb = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      mb.setPosition(0, y1, 0);
+      band.applyMatrix4(mb);
+      (i % 2 ? whiteParts : redParts).push(band);
+    }
+
+    var deck = new THREE.BoxGeometry(38, 8, 38);
+    deck.translate(0, 62, 0);
+    whiteParts.push(deck);
+    var deck2 = new THREE.CylinderGeometry(11, 12, 7, 10);
+    deck2.translate(0, 148, 0);
+    whiteParts.push(deck2);
+
+    var mast = new THREE.CylinderGeometry(0.7, 2.4, H * 0.34, 8);
+    mast.translate(0, H * 0.7 + H * 0.17, 0);
+    redParts.push(mast);
+
+    var r1m = new THREE.Mesh(World.mergeGeometries(redParts), red);
+    r1m.position.set(x, 0, z);
+    group.add(r1m);
+    var w1m = new THREE.Mesh(World.mergeGeometries(whiteParts), white);
+    w1m.position.set(x, 0, z);
+    group.add(w1m);
+  };
+
+  /* Кремлёвская башня со звездой и куском стены. */
+  World.buildKremlin = function (group, x, z, angle) {
+    var brickMat = new THREE.MeshLambertMaterial({ map: World.brickTexture('#9c3b34') });
+    var whiteMat = new THREE.MeshLambertMaterial({ color: 0xeae4d8 });
+    var roofMat = new THREE.MeshLambertMaterial({ color: 0x2f5c4a });
+    var goldMat = new THREE.MeshPhongMaterial({ color: 0xd9a441, specular: 0xfff0c0, shininess: 70 });
+
+    var root = new THREE.Group();
+    root.position.set(x, 0, z);
+    root.rotation.y = angle || 0;
+    group.add(root);
+
+    var brick = [];
+    // стена с зубцами-ласточкиными хвостами
+    for (var side = -1; side <= 1; side += 2) {
+      var wall = new THREE.BoxGeometry(90, 12, 4);
+      wall.translate(side * 62, 6, 0);
+      brick.push(wall);
+      for (var t = -44; t <= 44; t += 5.5) {
+        var merlon = new THREE.BoxGeometry(3, 4, 4.4);
+        merlon.translate(side * 62 + t, 14, 0);
+        brick.push(merlon);
+        var horn1 = new THREE.BoxGeometry(1.1, 2.2, 4.4);
+        horn1.translate(side * 62 + t - 1.1, 17, 0);
+        brick.push(horn1);
+        var horn2 = new THREE.BoxGeometry(1.1, 2.2, 4.4);
+        horn2.translate(side * 62 + t + 1.1, 17, 0);
+        brick.push(horn2);
+      }
+    }
+    // сама башня
+    var base = new THREE.BoxGeometry(20, 34, 20);
+    base.translate(0, 17, 0);
+    brick.push(base);
+    var mid = new THREE.BoxGeometry(15, 16, 15);
+    mid.translate(0, 42, 0);
+    brick.push(mid);
+    root.add(new THREE.Mesh(World.mergeGeometries(brick), brickMat));
+
+    // белые пояса и часы
+    var whites = [];
+    var belt = new THREE.BoxGeometry(21.5, 2.4, 21.5);
+    belt.translate(0, 34, 0);
+    whites.push(belt);
+    var belt2 = new THREE.BoxGeometry(16.5, 2, 16.5);
+    belt2.translate(0, 50, 0);
+    whites.push(belt2);
+    root.add(new THREE.Mesh(World.mergeGeometries(whites), whiteMat));
+
+    var clockTex = canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#2b2b2b';
+      g.beginPath(); g.arc(w / 2, h / 2, w / 2 - 4, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = '#e0b954';
+      g.lineWidth = 5;
+      g.beginPath(); g.arc(w / 2, h / 2, w / 2 - 8, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#e0b954';
+      for (var i = 0; i < 12; i++) {
+        var a = i / 12 * Math.PI * 2;
+        g.beginPath();
+        g.arc(w / 2 + Math.cos(a) * (w / 2 - 18), h / 2 + Math.sin(a) * (h / 2 - 18), 4, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.lineWidth = 6;
+      g.strokeStyle = '#e0b954';
+      g.beginPath(); g.moveTo(w / 2, h / 2); g.lineTo(w / 2 + 24, h / 2 - 26); g.stroke();
+      g.beginPath(); g.moveTo(w / 2, h / 2); g.lineTo(w / 2 - 12, h / 2 - 34); g.stroke();
+    });
+    for (var f = 0; f < 4; f++) {
+      var clock = new THREE.Mesh(new THREE.PlaneGeometry(11, 11),
+        new THREE.MeshLambertMaterial({ map: clockTex }));
+      var a2 = f * Math.PI / 2;
+      clock.position.set(Math.sin(a2) * 7.7, 42, Math.cos(a2) * 7.7);
+      clock.rotation.y = a2;
+      root.add(clock);
+    }
+
+    // зелёный шатёр и рубиновая звезда
+    var tent = new THREE.Mesh(new THREE.ConeGeometry(12, 26, 8), roofMat);
+    tent.position.y = 64;
+    root.add(tent);
+    var pin = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.6, 6, 6), goldMat);
+    pin.position.y = 79;
+    root.add(pin);
+    var star = new THREE.Mesh(new THREE.OctahedronGeometry(3.2, 0),
+      new THREE.MeshPhongMaterial({ color: 0xd83a3a, emissive: 0x6a1010, shininess: 80 }));
+    star.position.y = 83.5;
+    root.add(star);
+    return root;
+  };
+
+  /* Набережная Брюгге: ряд разноцветных домиков со ступенчатыми фронтонами. */
+  World.buildFlemishRow = function (group, x, z, angle) {
+    var root = new THREE.Group();
+    root.position.set(x, 0, z);
+    root.rotation.y = angle || 0;
+    group.add(root);
+
+    var colors = [0xd05a4a, 0xe0b23c, 0x4f8fbf, 0x6fae63, 0xd68ab0, 0xe4dcc8, 0xb06a3c];
+    var roofMat = new THREE.MeshLambertMaterial({ color: 0x6b3f34 });
+    var trimMat = new THREE.MeshLambertMaterial({ color: 0xf2ece0 });
+    var roofs = [], trims = [];
+
+    for (var i = 0; i < 9; i++) {
+      var wdt = 9 + Math.random() * 4;
+      var hgt = 14 + Math.random() * 8;
+      var px = (i - 4) * 12;
+      var mat = new THREE.MeshLambertMaterial({ color: colors[i % colors.length] });
+
+      var house = new THREE.Mesh(new THREE.BoxGeometry(wdt, hgt, 12), mat);
+      house.position.set(px, hgt / 2, 0);
+      root.add(house);
+
+      // ступенчатый фронтон
+      var steps = 4;
+      for (var stp = 0; stp < steps; stp++) {
+        var sw = wdt * (1 - stp * 0.22);
+        var step = new THREE.Mesh(new THREE.BoxGeometry(sw, 1.6, 12.4), mat);
+        step.position.set(px, hgt + 0.8 + stp * 1.6, 0);
+        root.add(step);
+      }
+
+      var roof = new THREE.BoxGeometry(wdt * 0.35, 1.4, 12.6);
+      roof.translate(px, hgt + steps * 1.6 + 1.4, 0);
+      roofs.push(roof);
+
+      // окна
+      for (var fl = 0; fl < 3; fl++) {
+        for (var c = -1; c <= 1; c++) {
+          var win = new THREE.BoxGeometry(2.2, 3, 0.4);
+          win.translate(px + c * 3, 3.5 + fl * 4.2, 6.1);
+          trims.push(win);
+        }
+      }
+      var door = new THREE.BoxGeometry(2.6, 4, 0.5);
+      door.translate(px, 2, 6.15);
+      trims.push(door);
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(roofs), roofMat));
+    root.add(new THREE.Mesh(World.mergeGeometries(trims), trimMat));
+
+    // башенка с часами в середине
+    var tower = new THREE.Mesh(new THREE.BoxGeometry(11, 34, 11),
+      new THREE.MeshLambertMaterial({ color: 0xe4dcc8 }));
+    tower.position.set(0, 17, -16);
+    root.add(tower);
+    var spire = new THREE.Mesh(new THREE.ConeGeometry(8, 16, 6), roofMat);
+    spire.position.set(0, 42, -16);
+    root.add(spire);
+    return root;
+  };
+
+  /* ---------- Печка ---------- */  /* ---------- Печка ---------- */
 
   /* ---------- Текстуры русской печи ---------- */
 
@@ -3165,79 +4088,249 @@
 
   /* ---------- Верблюд ---------- */
 
+  /* Шерсть: песочная, с подпалинами и лохматостью. */
+  World.camelFurTexture = function () {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#c69a5f';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 2200; i++) {
+        var v = Math.random();
+        g.fillStyle = v > 0.6 ? 'rgba(226,190,140,0.45)'
+          : (v > 0.3 ? 'rgba(160,118,68,0.35)' : 'rgba(110,78,44,0.25)');
+        g.fillRect(Math.random() * w, Math.random() * h, 2.5, 4);
+      }
+      // клочья шерсти
+      g.strokeStyle = 'rgba(232,200,150,0.5)';
+      g.lineWidth = 1.4;
+      for (var k = 0; k < 60; k++) {
+        var x = Math.random() * w, y = Math.random() * h;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.quadraticCurveTo(x + 3, y + 6, x - 2, y + 12);
+        g.stroke();
+      }
+    }, 2, 2);
+  };
+
+  /* Морда: добрые глаза с ресницами, ноздри, губа. */
+  World.camelFaceTexture = function () {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#c69a5f';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 900; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(226,190,140,0.4)' : 'rgba(150,110,64,0.3)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2.5, 3);
+      }
+      var cx = w * 0.5, cy = h * 0.45;
+      // глаза по бокам морды
+      for (var s = -1; s <= 1; s += 2) {
+        var ex = cx + s * 30;
+        g.fillStyle = '#f4e6d2';
+        g.beginPath(); g.ellipse(ex, cy - 12, 9, 7, 0, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#2b1d12';
+        g.beginPath(); g.ellipse(ex, cy - 11, 5.5, 5, 0, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#fff';
+        g.beginPath(); g.arc(ex - 2, cy - 13, 1.6, 0, Math.PI * 2); g.fill();
+        // ресницы
+        g.strokeStyle = '#3a2716';
+        g.lineWidth = 1.6;
+        for (var l = -2; l <= 2; l++) {
+          g.beginPath();
+          g.moveTo(ex + l * 4, cy - 18);
+          g.lineTo(ex + l * 4.6, cy - 24);
+          g.stroke();
+        }
+      }
+      // ноздри и губа ближе к «носу» развёртки
+      g.fillStyle = 'rgba(90,60,36,0.85)';
+      g.beginPath(); g.ellipse(cx - 9, cy + 26, 4.5, 6, 0.3, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.ellipse(cx + 9, cy + 26, 4.5, 6, -0.3, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = 'rgba(120,84,50,0.8)';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.moveTo(cx - 14, cy + 38);
+      g.quadraticCurveTo(cx, cy + 44, cx + 14, cy + 38);
+      g.stroke();
+    });
+  };
+
+  /* Ковровая попона с кистями. */
+  World.camelRugTexture = function () {
+    return canvasTexture(128, 64, function (g, w, h) {
+      g.fillStyle = '#a8322c';
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = '#e0a83c';
+      g.fillRect(0, 6, w, 5);
+      g.fillRect(0, h - 11, w, 5);
+      g.fillStyle = '#2f6f8f';
+      for (var x = 6; x < w; x += 22) {
+        g.beginPath();
+        g.moveTo(x, h / 2 - 11); g.lineTo(x + 11, h / 2); g.lineTo(x, h / 2 + 11); g.lineTo(x - 11, h / 2);
+        g.closePath(); g.fill();
+      }
+      g.fillStyle = '#f0e0c0';
+      for (var d = 14; d < w; d += 22) {
+        g.beginPath(); g.arc(d, h / 2, 3.2, 0, Math.PI * 2); g.fill();
+      }
+    }, 2, 1);
+  };
+
+  /* Дромадер: один горб, длинная гнутая шея, суставчатые ноги, попона. */
   World.buildCamel = function () {
     var g = new THREE.Group();
-    var hide = new THREE.MeshLambertMaterial({ color: 0xc79a5b });
-    var dark = new THREE.MeshLambertMaterial({ color: 0x8a6a3f });
+    var fur = new THREE.MeshLambertMaterial({ map: World.camelFurTexture() });
+    var dark = new THREE.MeshLambertMaterial({ color: 0x7a5734 });
 
-    var parts = [];
-    var body = new THREE.SphereGeometry(0.95, 14, 12);
-    var mb = new THREE.Matrix4().makeScale(0.85, 0.85, 1.5);
-    mb.setPosition(0, 1.65, 0);
-    body.applyMatrix4(mb);
-    parts.push(body);
+    // ---- корпус, горб и шея ----
+    var body = [];
+    var barrel = new THREE.SphereGeometry(1, 16, 12);
+    var mb = new THREE.Matrix4().makeScale(0.9, 0.95, 1.7);
+    mb.setPosition(0, 1.85, -0.1);
+    barrel.applyMatrix4(mb);
+    body.push(barrel);
 
-    for (var hmp = -1; hmp <= 1; hmp += 2) {
-      var hump = new THREE.SphereGeometry(0.5, 12, 10);
-      var mh = new THREE.Matrix4().makeScale(0.85, 0.9, 1);
-      mh.setPosition(0, 2.35, hmp * 0.42);
-      hump.applyMatrix4(mh);
-      parts.push(hump);
+    // грудь пошире, круп поуже
+    var chest = new THREE.SphereGeometry(0.85, 14, 10);
+    var mch = new THREE.Matrix4().makeScale(1, 1.05, 0.9);
+    mch.setPosition(0, 1.95, 1.05);
+    chest.applyMatrix4(mch);
+    body.push(chest);
+
+    var hump = new THREE.SphereGeometry(0.72, 14, 12);
+    var mh = new THREE.Matrix4().makeScale(0.9, 1.15, 1.05);
+    mh.setPosition(0, 2.75, -0.25);
+    hump.applyMatrix4(mh);
+    body.push(hump);
+
+    // шея из сегментов по дуге
+    var neckPts = [
+      { y: 2.35, z: 1.5, r: 0.42 },
+      { y: 2.75, z: 1.85, r: 0.36 },
+      { y: 3.15, z: 2.05, r: 0.31 },
+      { y: 3.5, z: 2.15, r: 0.27 }
+    ];
+    for (var i = 0; i < neckPts.length; i++) {
+      var seg = new THREE.SphereGeometry(neckPts[i].r, 12, 10);
+      var ms = new THREE.Matrix4().makeScale(1, 1.25, 1);
+      ms.setPosition(0, neckPts[i].y, neckPts[i].z);
+      seg.applyMatrix4(ms);
+      body.push(seg);
     }
+    g.add(new THREE.Mesh(World.mergeGeometries(body), fur));
 
-    var neck = new THREE.CylinderGeometry(0.22, 0.33, 1.5, 10);
-    var mn = new THREE.Matrix4().makeRotationX(-0.45);
-    mn.setPosition(0, 2.3, 1.1);
-    neck.applyMatrix4(mn);
-    parts.push(neck);
+    // грива под шеей
+    var mane = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.5, 1.0),
+      new THREE.MeshLambertMaterial({ color: 0x8a6238 }));
+    mane.position.set(0, 2.75, 1.72);
+    mane.rotation.x = -0.5;
+    g.add(mane);
 
-    var head = new THREE.SphereGeometry(0.3, 12, 10);
-    var mhd = new THREE.Matrix4().makeScale(0.8, 0.85, 1.25);
-    mhd.setPosition(0, 2.95, 1.7);
-    head.applyMatrix4(mhd);
-    parts.push(head);
+    // ---- голова ----
+    var head = new THREE.Group();
+    head.position.set(0, 3.62, 2.2);
+    g.add(head);
 
-    var muzzle = new THREE.SphereGeometry(0.18, 10, 8);
-    muzzle.translate(0, 2.82, 2.05);
-    parts.push(muzzle);
-    g.add(new THREE.Mesh(World.mergeGeometries(parts), hide));
+    var skull = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 12),
+      new THREE.MeshLambertMaterial({ map: World.camelFaceTexture() }));
+    skull.scale.set(0.85, 0.95, 1.5);
+    skull.position.z = 0.15;
+    head.add(skull);
 
-    var legs = [];
+    var muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), fur);
+    muzzle.scale.set(0.9, 0.8, 1.2);
+    muzzle.position.set(0, -0.1, 0.55);
+    head.add(muzzle);
+
+    var ears = [];
+    for (var ex = -1; ex <= 1; ex += 2) {
+      var ear = new THREE.SphereGeometry(0.11, 8, 6);
+      var me = new THREE.Matrix4().makeScale(0.55, 1, 0.4);
+      me.setPosition(ex * 0.2, 0.26, -0.1);
+      ear.applyMatrix4(me);
+      ears.push(ear);
+    }
+    head.add(new THREE.Mesh(World.mergeGeometries(ears), fur));
+
+    // недоуздок
+    var halter = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.028, 6, 14), dark);
+    halter.rotation.y = Math.PI / 2;
+    halter.position.set(0, -0.05, 0.42);
+    head.add(halter);
+
+    // ---- ноги с коленями ----
     var legPivots = [];
     for (var lx = -1; lx <= 1; lx += 2) {
       for (var lz = -1; lz <= 1; lz += 2) {
         var pivot = new THREE.Group();
-        pivot.position.set(lx * 0.5, 1.5, lz * 0.85);
-        var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.12, 1.5, 8), hide);
-        leg.position.y = -0.75;
-        pivot.add(leg);
-        var hoof = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.2, 8), dark);
-        hoof.position.y = -1.55;
-        pivot.add(hoof);
+        pivot.position.set(lx * 0.55, 1.75, lz === 1 ? 0.95 : -0.95);
+
+        var parts = [];
+        var thigh = new THREE.CylinderGeometry(0.19, 0.14, 0.85, 8);
+        thigh.translate(0, -0.42, 0);
+        parts.push(thigh);
+        var knee = new THREE.SphereGeometry(0.16, 8, 6);
+        knee.translate(0, -0.85, lz === 1 ? 0.04 : -0.04);
+        parts.push(knee);
+        var shin = new THREE.CylinderGeometry(0.11, 0.09, 0.8, 8);
+        shin.translate(0, -1.28, lz === 1 ? 0.06 : -0.06);
+        parts.push(shin);
+        pivot.add(new THREE.Mesh(World.mergeGeometries(parts), fur));
+
+        // широкая двупалая ступня
+        var pad = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), dark);
+        pad.scale.set(1, 0.45, 1.25);
+        pad.position.set(0, -1.7, lz === 1 ? 0.1 : -0.1);
+        pivot.add(pad);
+
         g.add(pivot);
         legPivots.push(pivot);
       }
     }
 
-    var tail = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.03, 0.9, 6), dark);
-    tail.position.set(0, 2.0, -1.4);
-    tail.rotation.x = 0.5;
-    g.add(tail);
-
-    // попона
-    var rug = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.12, 1.2),
-      new THREE.MeshLambertMaterial({ color: 0xc0392b }));
-    rug.position.set(0, 2.2, -0.1);
+    // ---- попона и седло ----
+    var rug = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.12, 1.5),
+      new THREE.MeshLambertMaterial({ map: World.camelRugTexture() }));
+    rug.position.set(0, 2.42, 0.35);
+    rug.rotation.x = -0.06;
     g.add(rug);
 
-    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(4, 4.6),
+    var saddle = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 0.3, 10), dark);
+    saddle.position.set(0, 3.06, -0.25);
+    g.add(saddle);
+
+    // кисти по краю попоны
+    var tassels = [];
+    for (var tx = -1; tx <= 1; tx += 2) {
+      for (var t = -2; t <= 2; t++) {
+        var tas = new THREE.CylinderGeometry(0.04, 0.02, 0.28, 5);
+        tas.translate(tx * 0.93, 2.28, 0.35 + t * 0.3);
+        tassels.push(tas);
+      }
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(tassels),
+      new THREE.MeshLambertMaterial({ color: 0xe0a83c })));
+
+    // ---- хвост ----
+    var tail = new THREE.Group();
+    tail.position.set(0, 2.35, -1.55);
+    var tailMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.04, 0.9, 6), fur);
+    tailMesh.position.y = -0.45;
+    tail.add(tailMesh);
+    var tuft = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), dark);
+    tuft.scale.set(0.8, 1.4, 0.8);
+    tuft.position.y = -0.95;
+    tail.add(tuft);
+    tail.rotation.x = 0.35;
+    g.add(tail);
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 4.6),
       new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.05;
     g.add(shadow);
 
     g.visible = false;
-    g.userData = { legs: legPivots, blob: shadow };
+    g.userData = { legs: legPivots, blob: shadow, head: head, tail: tail, neckBob: 0 };
     return g;
   };
 
@@ -3376,6 +4469,57 @@
       arr[i] += this.wind.x * dt;
       arr[i + 1] += this.wind.y * dt * (0.5 + Math.random());
       arr[i + 2] += this.wind.z * dt;
+      var dx = arr[i] - camPos.x, dy = arr[i + 1] - camPos.y, dz = arr[i + 2] - camPos.z;
+      if (dx < -bx / 2) arr[i] += bx; else if (dx > bx / 2) arr[i] -= bx;
+      if (dy < -by / 2) arr[i] += by; else if (dy > by / 2) arr[i] -= by;
+      if (dz < -bz / 2) arr[i] += bz; else if (dz > bz / 2) arr[i] -= bz;
+    }
+    this.points.geometry.attributes.position.needsUpdate = true;
+  };
+
+  /* ---------- Ливень ---------- */
+
+  World.RainSystem = function (scene, count) {
+    var n = count || 1400;
+    var geo = new THREE.BufferGeometry();
+    var pos = new Float32Array(n * 3);
+    this.box = { x: 120, y: 70, z: 120 };
+    for (var i = 0; i < n; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * this.box.x;
+      pos[i * 3 + 1] = Math.random() * this.box.y;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * this.box.z;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    // капля — вытянутый штрих, чтобы точки читались как струи
+    var tex = canvasTexture(32, 64, function (g, w, h) {
+      g.clearRect(0, 0, w, h);
+      var grd = g.createLinearGradient(0, 0, 0, h);
+      grd.addColorStop(0, 'rgba(200,225,245,0)');
+      grd.addColorStop(0.45, 'rgba(214,236,255,0.85)');
+      grd.addColorStop(1, 'rgba(190,220,245,0)');
+      g.fillStyle = grd;
+      g.fillRect(w / 2 - 2, 0, 4, h);
+    });
+    this.points = new THREE.Points(geo, new THREE.PointsMaterial({
+      map: tex, size: 2.6, transparent: true, opacity: 0,
+      depthWrite: false, sizeAttenuation: true, fog: false
+    }));
+    this.points.frustumCulled = false;
+    this.points.visible = false;
+    scene.add(this.points);
+    this.fall = new THREE.Vector3(-8, -52, 3);
+  };
+
+  World.RainSystem.prototype.update = function (dt, level, camPos) {
+    this.points.visible = level > 0.01;
+    this.points.material.opacity = Math.min(0.9, level);
+    if (!this.points.visible) return;
+    var arr = this.points.geometry.attributes.position.array;
+    var bx = this.box.x, by = this.box.y, bz = this.box.z;
+    for (var i = 0; i < arr.length; i += 3) {
+      arr[i] += this.fall.x * dt;
+      arr[i + 1] += this.fall.y * dt;
+      arr[i + 2] += this.fall.z * dt;
       var dx = arr[i] - camPos.x, dy = arr[i + 1] - camPos.y, dz = arr[i + 2] - camPos.z;
       if (dx < -bx / 2) arr[i] += bx; else if (dx > bx / 2) arr[i] -= bx;
       if (dy < -by / 2) arr[i] += by; else if (dy > by / 2) arr[i] -= by;
@@ -3686,7 +4830,7 @@
 
   var Game = {};
   var renderer, scene, camera, clock;
-  var track, intersections, smoke;
+  var track, intersections, smoke, road;
   var racers = [];
   var grannies = [];
   var granniesTimer = 0;
@@ -3695,7 +4839,12 @@
   var roach = null;
   var puddles = [];
   var heli = null;
-  var storm = { level: 0, active: false, timer: 45, left: 0, system: null };
+  var storm = {
+    level: 0, active: false, timer: 45, left: 0,
+    kind: 'sand',            // sand — песчаная буря, rain — ливень
+    system: null, rainSystem: null,
+    flash: 0, boltTimer: 0
+  };
   var sfx = new Sfx();
   var music = new Music(sfx);
   var engineNode = null;
@@ -3797,7 +4946,8 @@
   function buildWorld() {
     track = World.buildTrack();
     World.buildCity(track, scene);
-    var ground = [World.embankmentMesh(track), World.shoulderMesh(track), World.roadMesh(track)];
+    road = World.roadMesh(track);
+    var ground = [World.embankmentMesh(track), World.shoulderMesh(track), road];
     for (var i = 0; i < ground.length; i++) {
       ground[i].receiveShadow = true;
       scene.add(ground[i]);
@@ -3836,6 +4986,7 @@
     heli = { mesh: hm, active: false, dist: 0, side: 1, timer: 30 + Math.random() * 40, spin: 0 };
 
     storm.system = new World.SandStorm(scene, 900);
+    storm.rainSystem = new World.RainSystem(scene, 1400);
 
     for (var k = 0; k < 9; k++) {
       var pm = World.buildPuddle();
@@ -3854,7 +5005,9 @@
     roach.active = false; roach.mesh.visible = false; roach.timer = 22 + Math.random() * 25;
     heli.active = false; heli.mesh.visible = false; heli.timer = 25 + Math.random() * 35;
     storm.active = false; storm.level = 0; storm.timer = 40 + Math.random() * 40; storm.left = 0;
+    storm.kind = 'sand'; storm.flash = 0; storm.boltTimer = 0;
     sfx.setWind(0);
+    sfx.setRain(0);
     sfx.setRotor(0);
 
     // лужи раскидываем заново на каждый заезд
@@ -3956,10 +5109,15 @@
     obj.mesh.position.copy(p).addScaledVector(n, obj.lane);
     obj.mesh.position.y = p.y;
     obj.mesh.rotation.y = Math.atan2(t.x, t.z) + obj.dir * Math.PI / 2;
-    var legs = obj.mesh.userData.legs;
-    for (var i = 0; i < legs.length; i++) {
-      legs[i].rotation.x = Math.sin(obj.walk + i * 1.7) * 0.5;
+    var ud = obj.mesh.userData;
+    for (var i = 0; i < ud.legs.length; i++) {
+      ud.legs[i].rotation.x = Math.sin(obj.walk + i * 1.7) * 0.5;
     }
+    if (ud.head) {                       // верблюд кивает в такт шагу
+      ud.head.rotation.x = Math.sin(obj.walk * 0.5) * 0.12;
+      ud.head.position.y = 3.62 + Math.sin(obj.walk * 0.5 + 1) * 0.07;
+    }
+    if (ud.tail) ud.tail.rotation.z = Math.sin(obj.walk * 0.8) * 0.25;
     if (Math.abs(obj.lane) > MAX_LANE + 6 && obj.lane * obj.dir > 0) {
       obj.active = false;
       obj.mesh.visible = false;
@@ -4026,38 +5184,79 @@
     }
   }
 
-  /* Песчаная буря: видимость падает почти до нуля на 10–15 секунд. */
+  /* Погода: то песчаная буря, то ливень с грозой. Обе живут по одному
+     таймеру и плавно нарастают, чтобы не переключаться рывком. */
+  function startWeather(kind) {
+    storm.active = true;
+    storm.kind = kind;
+    storm.left = kind === 'rain' ? 14 + Math.random() * 10 : 10 + Math.random() * 5;
+    storm.boltTimer = 2 + Math.random() * 3;
+    if (kind === 'rain') {
+      sfx.startRain();
+      flash('ЛИВЕНЬ! Дорога мокрая', '#7fd4ff');
+    } else {
+      sfx.startWind();
+      flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
+    }
+  }
+
   function updateStorm(dt) {
     if (storm.active) {
       storm.left -= dt;
       if (storm.left <= 0) {
         storm.active = false;
         storm.timer = 45 + Math.random() * 45;
-        flash('Буря улеглась', '#e8cf9d');
+        flash(storm.kind === 'rain' ? 'Дождь кончился' : 'Буря улеглась', '#e8cf9d');
       }
     } else if (!admin.noHazards) {
       storm.timer -= dt;
-      if (storm.timer <= 0) {
-        storm.active = true;
-        storm.left = 10 + Math.random() * 5;
-        sfx.startWind();
-        flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
-      }
+      if (storm.timer <= 0) startWeather(Math.random() < 0.5 ? 'rain' : 'sand');
     }
 
     var target = storm.active ? 1 : 0;
     storm.level += (target - storm.level) * Math.min(1, dt * 0.9);
     if (storm.level < 0.002) storm.level = 0;
 
-    scene.fog.density = 0.0013 + storm.level * 0.0135;
-    scene.fog.color.setHex(0xcbb489).lerp(new THREE.Color(0xbd8f4a), storm.level);
-    renderer.setClearColor(new THREE.Color(0xbcd3e6).lerp(new THREE.Color(0xc79a52), storm.level));
-    if (sunLight) sunLight.intensity = 1.3 * (1 - 0.55 * storm.level);
-    if (World.skyMesh) {
-      World.skyMesh.material.color.setHex(0xffffff).lerp(new THREE.Color(0xb98b46), storm.level);
+    var rain = storm.kind === 'rain' ? storm.level : 0;
+    var sand = storm.kind === 'sand' ? storm.level : 0;
+
+    // молнии: короткая вспышка и раскат чуть позже
+    if (rain > 0.5) {
+      storm.boltTimer -= dt;
+      if (storm.boltTimer <= 0) {
+        storm.boltTimer = 4 + Math.random() * 7;
+        storm.flash = 1;
+        var delay = 300 + Math.random() * 1200;
+        setTimeout(function () { sfx.thunder(0.55 + Math.random() * 0.4); }, delay);
+      }
     }
-    sfx.setWind(storm.level);
-    storm.system.update(dt, storm.level, camera.position);
+    storm.flash = Math.max(0, storm.flash - dt * 3.5);
+
+    // туман, небо и солнце
+    scene.fog.density = 0.0013 + sand * 0.0135 + rain * 0.0055;
+    var fogColor = new THREE.Color(0xcbb489)
+      .lerp(new THREE.Color(0xbd8f4a), sand)
+      .lerp(new THREE.Color(0x6f7b86), rain);
+    scene.fog.color.copy(fogColor);
+    renderer.setClearColor(new THREE.Color(0xbcd3e6)
+      .lerp(new THREE.Color(0xc79a52), sand)
+      .lerp(new THREE.Color(0x5d6874), rain));
+    if (sunLight) {
+      sunLight.intensity = 1.3 * (1 - 0.55 * sand - 0.5 * rain) + storm.flash * 2.2;
+    }
+    if (World.skyMesh) {
+      World.skyMesh.material.color.setHex(0xffffff)
+        .lerp(new THREE.Color(0xb98b46), sand)
+        .lerp(new THREE.Color(0x63707d), rain)
+        .addScalar(storm.flash * 0.5);
+    }
+    // мокрый асфальт темнеет
+    if (road) road.material.color.setHex(0xffffff).lerp(new THREE.Color(0x7d838c), rain);
+
+    sfx.setWind(sand);
+    sfx.setRain(rain);
+    storm.system.update(dt, sand, camera.position);
+    storm.rainSystem.update(dt, rain, camera.position);
   }
 
   /* Лужи: заехал — занос. */
@@ -4071,7 +5270,8 @@
         var along = Math.abs(track.norm(r.dist - p.dist + track.length / 2) - track.length / 2);
         if (along > p.radius) continue;
         if (Math.abs(r.lane - p.lane) > p.radius * 0.8) continue;
-        r.skid = (Math.random() < 0.5 ? -1 : 1) * (2.6 + r.speed * 0.09);
+        var wetBonus = storm.kind === 'rain' ? 1 + storm.level * 0.6 : 1;
+        r.skid = (Math.random() < 0.5 ? -1 : 1) * (2.6 + r.speed * 0.09) * wetBonus;
         r.puddleCooldown = 2.2;
         var d = camera.position.distanceTo(r.mesh.position);
         sfx.splash(Math.max(0, 1 - d / 120));
@@ -4801,7 +6001,8 @@
       // Внимание: track.sideAt() смотрит ВЛЕВО от движения, поэтому
       // «вправо» (steer = +1) — это уменьшение полосы.
       // В заносе после лужи и в полёте руль почти бесполезен.
-      var grip = (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1);
+      var wet = storm.kind === 'rain' ? storm.level : 0;
+      var grip = (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1) * (1 - wet * 0.25);
       r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * grip;
 
       if (r.skid !== 0) {
@@ -5141,6 +6342,10 @@
     ui.jail.style.opacity = f.jail > 0 ? '1' : '0';
     if (f.jail > 0) ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' + f.jailReason;
     ui.storm.style.opacity = storm.level > 0.25 ? '1' : '0';
+    if (storm.level > 0.25) {
+      ui.storm.textContent = storm.kind === 'rain' ? '🌧 ЛИВЕНЬ' : '🌪 ПЕСЧАНАЯ БУРЯ';
+      ui.storm.classList.toggle('rain', storm.kind === 'rain');
+    }
 
     // состояние каждого игрока
     for (var h = 0; h < ui.pedals.length; h++) {
@@ -5516,10 +6721,10 @@
     });
     document.getElementById('adm-kill').addEventListener('click', killBot);
     document.getElementById('adm-storm').addEventListener('click', function () {
-      storm.active = true;
-      storm.left = 12;
-      sfx.startWind();
-      flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
+      startWeather('sand');
+    });
+    document.getElementById('adm-rain').addEventListener('click', function () {
+      startWeather('rain');
     });
     document.getElementById('adm-heli').addEventListener('click', function () {
       var f = focusRacer();
@@ -5669,7 +6874,7 @@
         };
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
-      storm: { active: storm.active, level: +storm.level.toFixed(2) },
+      storm: { active: storm.active, kind: storm.kind, level: +storm.level.toFixed(2) },
       heli: heli ? heli.active : false,
       police: police.filter(function (c) { return c.active; }).map(function (c) {
         return { dist: Math.round(c.dist), lane: +c.lane.toFixed(1), left: +c.timer.toFixed(1) };
