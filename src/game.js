@@ -18,6 +18,7 @@
   var STEAM_MIN = 18;          // ниже этого турбо не включить
   var HILL_PULL = 24;          // как сильно горка тянет назад (м/с^2 на единицу уклона)
   var DOWNHILL_CAP = 1.22;     // под горку можно перебрать сверх обычного максимума
+  var SOAR_HEIGHT = 20;        // на какой высоте несут солнечные руки
   var GRAVITY = 12.5;          // сила тяжести: чуть меньше настоящей, чтобы прыжок читался
 
   var COLORS = [0xff4d4d, 0x4da3ff, 0x53d769, 0xffd23f, 0xb46cff, 0xff8a3d, 0x38e0d0, 0xff6fb5];
@@ -34,6 +35,31 @@
     { short: 'P', label: 'P · O [', throttle: ['KeyP', 'Digit7'], left: ['KeyO'], right: ['BracketLeft'], boost: [] }
   ];
 
+  /* Сложность: насколько толковые соперники достаются игроку. */
+  var DIFFICULTIES = {
+    easy: {
+      id: 'easy', title: 'Новичок', hint: 'соперники еле едут и сами вылетают на красный',
+      skill: [0.76, 0.11], reaction: [0.45, 0.5], reckless: [0.3, 0.7],
+      rules: 0.5, boost: 0, avoid: 0.65
+    },
+    normal: {
+      id: 'normal', title: 'Обычная', hint: 'кто-то осторожный, кто-то лихач',
+      skill: [0.87, 0.13], reaction: [0.18, 0.55], reckless: [0, 1],
+      rules: 1, boost: 0, avoid: 1
+    },
+    hard: {
+      id: 'hard', title: 'Сложная', hint: 'ловкие: тормозят у радаров и лезут в обгон',
+      skill: [0.96, 0.07], reaction: [0.12, 0.28], reckless: [0, 0.5],
+      rules: 1.25, boost: 0.4, avoid: 1.35
+    },
+    insane: {
+      id: 'insane', title: 'Печные асы', hint: 'идеальная траектория и своё турбо',
+      skill: [1.0, 0.06], reaction: [0.07, 0.16], reckless: [0, 0.3],
+      rules: 1.45, boost: 1, avoid: 1.6
+    }
+  };
+  var difficulty = DIFFICULTIES.normal;
+
   var AI_NAMES = ['Кузьмич', 'Матрёна', 'Валера', 'Зульфия', 'Дядя Гриша', 'Печкин', 'Байрам', 'Тётя Зина'];
 
   var Game = {};
@@ -46,6 +72,12 @@
   var camel = null;
   var roach = null;
   var puddles = [];
+  var pedestrians = [];
+  var signs = [];
+  var birds = [];
+  var birdTimer = 12;
+  var coin = null;             // солнечная монетка: одна на трассе
+  var sunHands = null;
   var heli = null;
   var storm = {
     level: 0, active: false, timer: 45, left: 0,
@@ -79,6 +111,8 @@
     noHazards: false,
     lights: 'auto'
   };
+  var mapId = 'dubai';
+  var themeObjects = [];
   var sunLight = null;
   var shadowsOn = false;
   var camPos = new THREE.Vector3();
@@ -91,7 +125,7 @@
     renderer = new THREE.WebGLRenderer({ antialias: true, canvas: ui.canvas });
     renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 2));
     renderer.setSize(global.innerWidth, global.innerHeight);
-    renderer.setClearColor(0xbcd3e6);
+    renderer.setClearColor(World.theme.clear);
 
     // цвет и свет: линейное освещение с плёночной компрессией даёт куда более
     // живую картинку, чем сырой вывод
@@ -107,7 +141,7 @@
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xcbb489, 0.0013);
+    scene.fog = new THREE.FogExp2(World.theme.fog, World.theme.fogDensity);
 
     camera = new THREE.PerspectiveCamera(62, global.innerWidth / global.innerHeight, 0.5, 3000);
     camera.position.set(0, 20, 40);
@@ -153,13 +187,7 @@
 
   function buildWorld() {
     track = World.buildTrack();
-    World.buildCity(track, scene);
-    road = World.roadMesh(track);
-    var ground = [World.embankmentMesh(track), World.shoulderMesh(track), road];
-    for (var i = 0; i < ground.length; i++) {
-      ground[i].receiveShadow = true;
-      scene.add(ground[i]);
-    }
+    buildScenery(mapId);
     World.jumpSigns(track, scene);
     intersections = World.buildIntersections(track, scene);
     intersections.forEach(function (i) { World.applyLightState(i); });
@@ -167,6 +195,53 @@
     smoke = new World.SmokeSystem(scene, 300);
     createGrannies();
     createHazards();
+    createRoadSigns();
+    createPedestrians();
+    createBirds();
+    createCoin();
+  }
+
+  /* Город, земля и дорога — всё, что меняется вместе с картой.
+     Трасса при этом одна и та же, поэтому бабушки, знаки и печки на месте. */
+  function buildScenery(id) {
+    var theme = World.THEMES[id] || World.THEMES.dubai;
+    mapId = theme.id;
+    World.theme = theme;
+
+    for (var i = 0; i < themeObjects.length; i++) {
+      scene.remove(themeObjects[i]);
+      disposeTree(themeObjects[i]);
+    }
+    themeObjects = [];
+
+    themeObjects.push(World.buildCity(track, scene, theme));
+    road = World.roadMesh(track);
+    var ground = [World.embankmentMesh(track), World.shoulderMesh(track), road,
+                  World.sidewalkMesh(track)];
+    for (var k = 0; k < ground.length; k++) {
+      ground[k].receiveShadow = true;
+      scene.add(ground[k]);
+      themeObjects.push(ground[k]);
+    }
+
+    if (scene.fog) {
+      scene.fog.color.setHex(theme.fog);
+      scene.fog.density = theme.fogDensity;
+    }
+    if (renderer) renderer.setClearColor(theme.clear);
+  }
+
+  function disposeTree(obj) {
+    obj.traverse(function (o) {
+      if (o.geometry) o.geometry.dispose();
+      var m = o.material;
+      if (!m) return;
+      var list = Array.isArray(m) ? m : [m];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].map) list[i].map.dispose();
+        list[i].dispose();
+      }
+    });
   }
 
   /* ---------------- Полиция, звери, лужи, буря ---------------- */
@@ -397,15 +472,26 @@
   function startWeather(kind) {
     storm.active = true;
     storm.kind = kind;
-    storm.left = kind === 'rain' ? 14 + Math.random() * 10 : 10 + Math.random() * 5;
+    storm.left = kind === 'sand' ? 10 + Math.random() * 5 : 14 + Math.random() * 12;
     storm.boltTimer = 2 + Math.random() * 3;
     if (kind === 'rain') {
+      storm.rainSystem.setMode('rain');
       sfx.startRain();
       flash('ЛИВЕНЬ! Дорога мокрая', '#7fd4ff');
+    } else if (kind === 'snow') {
+      storm.rainSystem.setMode('snow');
+      sfx.startWind();
+      flash('СНЕГОПАД! Дорогу заметает', '#dff0ff');
     } else {
       sfx.startWind();
       flash('ПЕСЧАНАЯ БУРЯ!', '#e0a63c');
     }
+  }
+
+  /* Какая непогода бывает в этом городе. */
+  function randomWeather() {
+    var list = World.theme.weather || ['sand'];
+    return list[Math.floor(Math.random() * list.length)];
   }
 
   function updateStorm(dt) {
@@ -414,11 +500,12 @@
       if (storm.left <= 0) {
         storm.active = false;
         storm.timer = 45 + Math.random() * 45;
-        flash(storm.kind === 'rain' ? 'Дождь кончился' : 'Буря улеглась', '#e8cf9d');
+        flash(storm.kind === 'rain' ? 'Дождь кончился'
+          : (storm.kind === 'snow' ? 'Снегопад стих' : 'Буря улеглась'), '#e8cf9d');
       }
     } else if (!admin.noHazards) {
       storm.timer -= dt;
-      if (storm.timer <= 0) startWeather(Math.random() < 0.5 ? 'rain' : 'sand');
+      if (storm.timer <= 0) startWeather(randomWeather());
     }
 
     var target = storm.active ? 1 : 0;
@@ -427,6 +514,7 @@
 
     var rain = storm.kind === 'rain' ? storm.level : 0;
     var sand = storm.kind === 'sand' ? storm.level : 0;
+    var snow = storm.kind === 'snow' ? storm.level : 0;
 
     // молнии: короткая вспышка и раскат чуть позже
     if (rain > 0.5) {
@@ -440,31 +528,39 @@
     }
     storm.flash = Math.max(0, storm.flash - dt * 3.5);
 
-    // туман, небо и солнце
-    scene.fog.density = 0.0013 + sand * 0.0135 + rain * 0.0055;
-    var fogColor = new THREE.Color(0xcbb489)
+    // туман, небо и солнце — цвета берём из темы города
+    var theme = World.theme;
+    scene.fog.density = theme.fogDensity + sand * 0.0135 + rain * 0.0055 + snow * 0.009;
+    var fogColor = new THREE.Color(theme.fog)
       .lerp(new THREE.Color(0xbd8f4a), sand)
-      .lerp(new THREE.Color(0x6f7b86), rain);
+      .lerp(new THREE.Color(0x6f7b86), rain)
+      .lerp(new THREE.Color(0xdae6f0), snow);
     scene.fog.color.copy(fogColor);
-    renderer.setClearColor(new THREE.Color(0xbcd3e6)
+    renderer.setClearColor(new THREE.Color(theme.clear)
       .lerp(new THREE.Color(0xc79a52), sand)
-      .lerp(new THREE.Color(0x5d6874), rain));
+      .lerp(new THREE.Color(0x5d6874), rain)
+      .lerp(new THREE.Color(0xc9d8e6), snow));
     if (sunLight) {
-      sunLight.intensity = 1.3 * (1 - 0.55 * sand - 0.5 * rain) + storm.flash * 2.2;
+      sunLight.intensity = 1.3 * (1 - 0.55 * sand - 0.5 * rain - 0.35 * snow) + storm.flash * 2.2;
     }
     if (World.skyMesh) {
       World.skyMesh.material.color.setHex(0xffffff)
         .lerp(new THREE.Color(0xb98b46), sand)
         .lerp(new THREE.Color(0x63707d), rain)
+        .lerp(new THREE.Color(0xc2d2e0), snow)
         .addScalar(storm.flash * 0.5);
     }
-    // мокрый асфальт темнеет
-    if (road) road.material.color.setHex(0xffffff).lerp(new THREE.Color(0x7d838c), rain);
+    // мокрый асфальт темнеет, заснеженный — белеет
+    if (road) {
+      road.material.color.setHex(0xffffff)
+        .lerp(new THREE.Color(0x7d838c), rain)
+        .lerp(new THREE.Color(0xdfe6ee), snow);
+    }
 
-    sfx.setWind(sand);
+    sfx.setWind(sand + snow * 0.6);
     sfx.setRain(rain);
     storm.system.update(dt, sand, camera.position);
-    storm.rainSystem.update(dt, rain, camera.position);
+    storm.rainSystem.update(dt, Math.max(rain, snow), camera.position);
   }
 
   /* Лужи: заехал — занос. */
@@ -472,6 +568,7 @@
     for (var i = 0; i < racers.length; i++) {
       var r = racers[i];
       if (r.dq || r.finished || r.jail > 0 || r.speed < 6) continue;
+      if (r.soarY > 1) continue;               // лужи остались далеко внизу
       if (r.puddleCooldown > 0) { r.puddleCooldown -= dt; continue; }
       for (var k = 0; k < puddles.length; k++) {
         var p = puddles[k];
@@ -500,6 +597,7 @@
     for (var i = 0; i < racers.length; i++) {
       var r = racers[i];
       if (r.dq || r.finished || r.jail > 0 || r.speed < 1) continue;
+      if (r.soarY > 1) continue;               // в полёте препятствия под ним
 
       // полицейская машина: тюрьма на 30 секунд
       for (var k = 0; k < police.length; k++) {
@@ -583,6 +681,563 @@
     sfx.jailClang();
     disqualify(r, 'врезался в верблюда — тюрьма до конца гонки');
     r.mesh.visible = false;
+  }
+
+  /* ---------------- Тротуары: прохожие ---------------- */
+
+  function createPedestrians() {
+    var N = 16;
+    for (var i = 0; i < N; i++) {
+      var mesh = World.buildPedestrian();
+      mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      scene.add(mesh);
+      pedestrians.push({
+        mesh: mesh,
+        dist: track.length * i / N + Math.random() * 25,
+        side: i % 2 ? 1 : -1,
+        dir: Math.random() < 0.5 ? 1 : -1,
+        speed: 0.8 + Math.random() * 0.8,
+        off: World.sidewalkOffset(track) + (Math.random() - 0.5) * 2.2,
+        walk: Math.random() * 6,
+        pause: Math.random() * 8
+      });
+    }
+  }
+
+  function updatePedestrians(dt) {
+    for (var i = 0; i < pedestrians.length; i++) {
+      var p = pedestrians[i];
+      // далёких не считаем и не рисуем — это самый дешёвый способ сэкономить
+      var far = camera.position.distanceTo(p.mesh.position) > 220;
+      p.mesh.visible = !far;
+      if (far) continue;
+
+      if (p.pause > 0) {
+        p.pause -= dt;                    // остановился поглазеть на печки
+      } else {
+        p.dist = track.norm(p.dist + p.dir * p.speed * dt);
+        p.walk += dt * p.speed * 4.2;
+        if (Math.random() < dt * 0.03) p.pause = 1.5 + Math.random() * 4;
+        if (Math.random() < dt * 0.02) p.dir = -p.dir;      // передумал и пошёл обратно
+      }
+
+      var pt = track.pointAt(p.dist);
+      var n = track.sideAt(p.dist);
+      var t = track.tangentAt(p.dist);
+      p.mesh.position.copy(pt).addScaledVector(n, p.side * p.off);
+      p.mesh.position.y = pt.y + 0.3;
+      p.mesh.rotation.y = Math.atan2(t.x, t.z) + (p.dir > 0 ? 0 : Math.PI);
+      var legs = p.mesh.userData.legs;
+      var swing = p.pause > 0 ? 0 : Math.sin(p.walk) * 0.55;
+      legs[0].rotation.x = swing;
+      legs[1].rotation.x = -swing;
+      p.mesh.position.y += p.pause > 0 ? 0 : Math.abs(Math.sin(p.walk)) * 0.04;
+    }
+  }
+
+  /* ---------------- Знаки ограничения скорости и плакаты ---------------- */
+
+  function createRoadSigns() {
+    // знаки стоят между перекрёстками, за каждым — радар
+    var spots = [
+      { u: 0.10, limit: 80 }, { u: 0.34, limit: 60 },
+      { u: 0.58, limit: 80 }, { u: 0.80, limit: 60 }
+    ];
+    for (var i = 0; i < spots.length; i++) {
+      var d = track.length * spots[i].u;
+      var mesh = World.speedSign(spots[i].limit);
+      var p = track.pointAt(d);
+      var n = track.sideAt(d);
+      var t = track.tangentAt(d);
+      var sideSign = i % 2 ? 1 : -1;
+      mesh.position.copy(p).addScaledVector(n, sideSign * (track.width / 2 + 3));
+      mesh.position.y = p.y;
+      // знак и объектив смотрят навстречу печкам
+      mesh.rotation.y = Math.atan2(-t.x, -t.z) + sideSign * 0.16;
+      mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      scene.add(mesh);
+      signs.push({ mesh: mesh, dist: d, limit: spots[i].limit, flash: 0 });
+    }
+
+    // плакаты с народной мудростью — по одному в промежутках
+    for (var b = 0; b < World.BILLBOARDS.length; b++) {
+      var bd = track.length * (0.13 + b * 0.24);
+      var bp = track.pointAt(bd);
+      var bn = track.sideAt(bd);
+      var bside = b % 2 ? -1 : 1;
+      var bill = World.billboard(World.BILLBOARDS[b].lines, World.BILLBOARDS[b].accent);
+      bill.position.copy(bp).addScaledVector(bn, bside * (World.roadFootprint(track, bd) + 4));
+      bill.position.y = 0;
+      var bt = track.tangentAt(bd);
+      bill.rotation.y = Math.atan2(-bt.x, -bt.z) + bside * 0.5;
+      bill.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      scene.add(bill);
+    }
+  }
+
+  /* Ближайший знак впереди — для подсказки в HUD и для ИИ. */
+  function nextSign(r) {
+    var best = null, bestGap = Infinity;
+    for (var i = 0; i < signs.length; i++) {
+      var gap = track.norm(signs[i].dist - r.dist);
+      if (gap < bestGap) { bestGap = gap; best = signs[i]; }
+    }
+    return best ? { sign: best, gap: bestGap } : null;
+  }
+
+  /* Радар: проехал знак быстрее нормы — пять секунд тюрьмы. */
+  function checkSpeedSigns() {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished || r.jail > 0 || r.soarY > 1) continue;
+      for (var k = 0; k < signs.length; k++) {
+        var s = signs[k];
+        if (!crossedPoint(r, s.dist)) continue;
+        var kmh = Math.round(r.speed * 3.6);
+        if (kmh <= s.limit + 5) continue;
+        s.flash = 0.35;
+        var d = camera.position.distanceTo(s.mesh.position);
+        if (d < 260) sfx.radarSnap();
+        jailRacer(r, 5, 'превысил: ' + kmh + ' при знаке ' + s.limit);
+        break;
+      }
+    }
+  }
+
+  /* Пересёк ли гонщик эту точку трассы в текущем кадре. */
+  function crossedPoint(r, d) {
+    var a = track.norm(r.prevDist), b = track.norm(r.dist);
+    if (b < a) b += track.length;              // перешли через ноль
+    var x = track.norm(d);
+    if (x < a) x += track.length;
+    return x > a && x <= b;
+  }
+
+  function updateSigns(dt) {
+    for (var i = 0; i < signs.length; i++) {
+      var s = signs[i];
+      if (s.flash > 0) {
+        s.flash -= dt;
+        var lens = s.mesh.userData.lens;
+        var on = s.flash > 0;
+        lens.material.emissive.setHex(on ? 0xffffff : 0x331010);
+      }
+    }
+  }
+
+  /* ---------------- Солнечная монетка и полёт ---------------- */
+
+  function createCoin() {
+    var mesh = World.buildCoin();
+    mesh.visible = false;
+    scene.add(mesh);
+    coin = { mesh: mesh, active: false, dist: 0, lane: 0, spin: 0, timer: 20 };
+    sunHands = World.buildSunHands();
+    scene.add(sunHands);
+  }
+
+  function resetCoin() {
+    coin.active = false;
+    coin.mesh.visible = false;
+    coin.timer = 18 + Math.random() * 14;
+    sunHands.visible = false;
+    for (var i = 0; i < racers.length; i++) {
+      racers[i].soarLeft = 0;
+      racers[i].soarY = 0;
+    }
+  }
+
+  function someoneSoaring() {
+    for (var i = 0; i < racers.length; i++) if (racers[i].soarY > 0.2) return true;
+    return false;
+  }
+
+  function spawnCoin() {
+    var lead = -Infinity;
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (!r.dq && !r.finished && r.dist > lead) lead = r.dist;
+    }
+    if (lead === -Infinity) return;
+    coin.dist = track.norm(lead + 140 + Math.random() * 260);
+    coin.lane = (Math.random() - 0.5) * 12;
+    coin.active = true;
+    coin.mesh.visible = true;
+    placeCoin();
+    flash('☀️ Где-то впереди солнечная монетка!', '#ffd23f');
+  }
+
+  function placeCoin() {
+    var p = track.pointAt(coin.dist);
+    var n = track.sideAt(coin.dist);
+    coin.mesh.position.copy(p).addScaledVector(n, coin.lane);
+    coin.mesh.position.y = p.y + 1.5 + Math.sin(coin.spin * 1.3) * 0.25;
+  }
+
+  function updateCoin(dt) {
+    if (!coin.active) {
+      if (someoneSoaring()) return;
+      coin.timer -= dt;
+      if (coin.timer <= 0) spawnCoin();
+      return;
+    }
+    coin.spin += dt * 2.6;
+    coin.mesh.rotation.y = coin.spin;
+    placeCoin();
+    coin.mesh.userData.glow.material.opacity = 0.7 + Math.sin(coin.spin * 3) * 0.2;
+
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished || r.jail > 0) continue;
+      var along = Math.abs(track.norm(r.dist - coin.dist + track.length / 2) - track.length / 2);
+      if (along < 3.2 && Math.abs(r.lane - coin.lane) < 2.6) { takeCoin(r); break; }
+    }
+  }
+
+  function takeCoin(r) {
+    coin.active = false;
+    coin.mesh.visible = false;
+    coin.timer = 30 + Math.random() * 25;
+    r.soarLeft = 20;
+    sfx.coinChime();
+    sfx.sunLift();
+    music.duck(1.8);
+    flash('☀️ Солнце подняло ' + r.name + ' над дорогой на 20 секунд!', '#ffd23f');
+    for (var i = 0; i < 16; i++) {
+      var p = r.mesh.position.clone();
+      p.y += 1 + Math.random() * 2;
+      smoke.emit(p, new THREE.Vector3((Math.random() - 0.5) * 6, 3 + Math.random() * 4,
+        (Math.random() - 0.5) * 6), 1.2, 0xffe08a);
+    }
+  }
+
+  /* Полёт на солнечных руках: печка поднимается на 20 м и летит над всеми. */
+  function updateSoar(r, dt) {
+    var target = r.soarLeft > 0 ? SOAR_HEIGHT : 0;
+    if (r.soarLeft > 0) {
+      r.soarLeft -= dt;
+      if (r.soarLeft <= 0) {
+        r.soarLeft = 0;
+        if (r.isHuman) flash(r.name + ' спускается на дорогу', '#ffd23f');
+      }
+    }
+    var rate = target > r.soarY ? 9 : 6;
+    if (Math.abs(target - r.soarY) < rate * dt) r.soarY = target;
+    else r.soarY += (target > r.soarY ? 1 : -1) * rate * dt;
+
+    if (r.soarY > 0.2) {
+      r.flying = false;
+      r.air = 0;
+      r.skid = 0;
+    }
+  }
+
+  /* Руки солнца держат ту печку, которая сейчас летит. */
+  function updateSunHands(dt) {
+    var flyer = null;
+    for (var i = 0; i < racers.length; i++) if (racers[i].soarY > 0.2) flyer = racers[i];
+    if (!flyer) { sunHands.visible = false; return; }
+    sunHands.visible = true;
+    var mat = sunHands.userData.mat;
+    var k = Math.min(1, flyer.soarY / SOAR_HEIGHT);
+    mat.opacity = 0.35 + k * 0.55;
+    sunHands.userData.halo.material.opacity = 0.3 + k * 0.4;
+    sunHands.position.copy(flyer.mesh.position);
+    sunHands.position.y -= 0.6;
+    // руки тянутся с той стороны, где солнце
+    sunHands.rotation.y = Math.atan2(World.SUN_DIR.x, World.SUN_DIR.z) + Math.PI;
+    sunHands.scale.setScalar(0.7 + k * 0.5);
+  }
+
+  /* ---------------- Птички ---------------- */
+
+  function createBirds() {
+    for (var i = 0; i < 7; i++) {
+      var mesh = World.buildBird();
+      mesh.visible = false;
+      scene.add(mesh);
+      birds.push({ mesh: mesh, active: false, vel: new THREE.Vector3(),
+        flap: Math.random() * 6, ttl: 0, trill: 0, bob: Math.random() * 6 });
+    }
+  }
+
+  function spawnFlock() {
+    var f = focusRacer();
+    if (!f) return;
+    var t = track.tangentAt(f.dist);
+    var n = track.sideAt(f.dist);
+    var ahead = 60 + Math.random() * 90;
+    var side = Math.random() < 0.5 ? 1 : -1;
+    var speed = 7 + Math.random() * 6;
+    var base = f.mesh.position.clone().addScaledVector(t, ahead)
+      .addScaledVector(n, side * (55 + Math.random() * 40));
+    base.y = f.mesh.position.y + 10 + Math.random() * 14;
+    var dir = n.clone().multiplyScalar(-side).addScaledVector(t, (Math.random() - 0.3) * 0.8).normalize();
+    var count = 2 + Math.floor(Math.random() * 3);
+    var made = 0;
+    for (var i = 0; i < birds.length && made < count; i++) {
+      var b = birds[i];
+      if (b.active) continue;
+      b.active = true;
+      b.ttl = 16;
+      b.mesh.visible = true;
+      b.mesh.position.copy(base);
+      b.mesh.position.x += (Math.random() - 0.5) * 14;
+      b.mesh.position.z += (Math.random() - 0.5) * 14;
+      b.mesh.position.y += (Math.random() - 0.5) * 5;
+      b.vel.copy(dir).multiplyScalar(speed * (0.9 + Math.random() * 0.25));
+      b.trill = Math.random() * 1.5;
+      made++;
+    }
+    if (made) sfx.birdTrill(0.8);
+  }
+
+  function updateBirds(dt) {
+    birdTimer -= dt;
+    if (birdTimer <= 0) {
+      birdTimer = 22 + Math.random() * 30;
+      spawnFlock();
+    }
+    for (var i = 0; i < birds.length; i++) {
+      var b = birds[i];
+      if (!b.active) continue;
+      b.ttl -= dt;
+      b.flap += dt * 13;
+      b.bob += dt * 1.6;
+      if (b.ttl <= 0) { b.active = false; b.mesh.visible = false; continue; }
+      b.mesh.position.addScaledVector(b.vel, dt);
+      b.mesh.position.y += Math.sin(b.bob) * dt * 1.4;
+      b.mesh.rotation.y = Math.atan2(b.vel.x, b.vel.z);
+      b.mesh.rotation.z = Math.sin(b.bob) * 0.12;
+      var w = b.mesh.userData.wings;
+      var a = Math.sin(b.flap) * 0.9;
+      w[0].rotation.z = -a;
+      w[1].rotation.z = a;
+      // время от времени щебечут — громкость по расстоянию до камеры
+      b.trill -= dt;
+      if (b.trill <= 0) {
+        b.trill = 2.5 + Math.random() * 4;
+        var d = camera.position.distanceTo(b.mesh.position);
+        sfx.birdTrill(Math.max(0, 1 - d / 130));
+      }
+    }
+  }
+
+  /* ---------------- Пешком: сойти с печки и погулять ---------------- */
+
+  var WALK_SPEED = 2.4;         // шагом, м/с
+  var RUN_SPEED = 4.6;          // бегом (турбо-клавиша)
+
+  /* Сойти с печки или запрыгнуть обратно. Клавиша G у живых игроков. */
+  function toggleFoot(r) {
+    if (!r || !r.isHuman || r.dq || r.finished || r.jail > 0) return;
+    if (r.soarY > 0.5) { flash('Сначала приземлись!', '#ffd23f'); return; }
+
+    if (r.onFoot) {
+      var w = r.foot;
+      var gap = Math.abs(track.norm(w.dist - r.dist + track.length / 2) - track.length / 2);
+      if (gap > 6 || Math.abs(w.lane - r.lane) > 5) {
+        flash('До печки далеко — подойди ближе', '#ffd23f');
+        return;
+      }
+      r.onFoot = false;
+      w.mesh.visible = false;
+      r.mesh.userData.fire.visible = true;
+      r.mesh.userData.fireGlow.visible = true;
+      if (camel.chase === w) { camel.chase = null; camel.spit = 0; }
+      flash(r.name + ' снова на печи', '#8ce99a');
+      return;
+    }
+
+    if (r.speed > 9) { flash('Слишком быстро — притормози, чтобы сойти', '#ffd23f'); return; }
+    if (!r.foot) {
+      var kind = r.rider === 'blonde' ? 'woman' : (r.rider === 'emelya' ? 'man' : null);
+      var mesh = World.buildPedestrian(kind);
+      mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      scene.add(mesh);
+      r.foot = { mesh: mesh, dist: r.dist, lane: r.lane, walk: 0, stun: 0,
+                 speed: 0, steps: 0, owner: r };
+    }
+    r.onFoot = true;
+    r.speed = 0;
+    r.throttle = false;
+    r.boosting = false;
+    r.foot.dist = r.dist;
+    r.foot.lane = r.lane + (r.lane >= 0 ? -2.4 : 2.4);
+    r.foot.stun = 0;
+    r.foot.mesh.visible = true;
+    placeWalker(r.foot);
+    flash(r.name + ' слез с печки — осторожно, тут ездят!', '#ffd23f');
+  }
+
+  function placeWalker(w) {
+    var p = track.pointAt(w.dist);
+    var n = track.sideAt(w.dist);
+    w.mesh.position.copy(p).addScaledVector(n, w.lane);
+    w.mesh.position.y = p.y + (Math.abs(w.lane) > track.width / 2 ? 0.3 : 0);
+  }
+
+  function updateWalkers(dt) {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (!r.onFoot) continue;
+      var w = r.foot;
+
+      // печка стоит и ждёт хозяина
+      r.speed = 0;
+      r.throttle = false;
+      r.steer = 0;
+
+      if (w.stun > 0) {
+        w.stun -= dt;
+        w.mesh.rotation.x = -1.3;                 // лежит
+        w.mesh.rotation.y = Math.atan2(track.tangentAt(w.dist).x, track.tangentAt(w.dist).z);
+        placeWalker(w);
+        w.mesh.position.y += 0.4;
+        if (w.stun <= 0) { w.mesh.rotation.x = 0; flash(r.name + ' поднялся', '#8ce99a'); }
+        continue;
+      }
+      w.mesh.rotation.x = 0;
+
+      var fwd = (pressed(r.keys.throttle) || !!touchThrottle[r.id]) ? 1 : 0;
+      var left = pressed(r.keys.left) || touchSteer[r.id] === -1;
+      var right = pressed(r.keys.right) || touchSteer[r.id] === 1;
+      var run = r.canBoost && (pressed(r.keys.boost) || !!touchBoost[r.id]);
+      var v = run ? RUN_SPEED : WALK_SPEED;
+
+      w.dist = track.norm(w.dist + fwd * v * dt);
+      w.lane -= ((right ? 1 : 0) - (left ? 1 : 0)) * v * dt;
+      w.lane = Math.max(-(track.width / 2 + 3.5), Math.min(track.width / 2 + 3.5, w.lane));
+
+      var moving = fwd || left || right;
+      w.speed = moving ? v : 0;
+      if (moving) {
+        w.walk += dt * v * 3.4;
+        w.steps += dt * v;
+        if (w.steps > 1.1) {
+          w.steps = 0;
+          sfx.footstep(Math.max(0, 1 - camera.position.distanceTo(w.mesh.position) / 60));
+        }
+      }
+
+      var t = track.tangentAt(w.dist);
+      placeWalker(w);
+      w.mesh.rotation.y = Math.atan2(t.x, t.z) + (left ? 0.7 : 0) - (right ? 0.7 : 0);
+      var legs = w.mesh.userData.legs;
+      var swing = moving ? Math.sin(w.walk) * 0.6 : 0;
+      legs[0].rotation.x = swing;
+      legs[1].rotation.x = -swing;
+
+      checkWalkerDanger(r, w, dt);
+    }
+  }
+
+  /* Пешком опасно: печки сбивают, бабушка лупит тростью, верблюд гонится. */
+  function checkWalkerDanger(r, w, dt) {
+    // печка на полном ходу
+    for (var i = 0; i < racers.length; i++) {
+      var o = racers[i];
+      if (o === r || o.dq || o.jail > 0 || o.soarY > 1 || o.speed < 3) continue;
+      var along = Math.abs(track.norm(o.dist - w.dist + track.length / 2) - track.length / 2);
+      if (along < 2.6 && Math.abs(o.lane - w.lane) < BODY_HALF + 0.7) {
+        knockWalker(r, w, o.name + ' сбил тебя печкой');
+        return;
+      }
+    }
+
+    // бабушка: подошёл близко — получай тростью
+    for (var k = 0; k < grannies.length; k++) {
+      var g = grannies[k];
+      if (!g.active) continue;
+      var ag = Math.abs(track.norm(g.dist - w.dist + track.length / 2) - track.length / 2);
+      if (ag < 2.2 && Math.abs(g.lane - w.lane) < 2) {
+        if (g.whackCooldown <= 0) {
+          g.angry = 2.6;
+          g.whack = 0;
+          g.whackCooldown = 5;
+          sfx.caneWhack(0.9, true);
+          knockWalker(r, w, 'бабушка отходила тебя тростью');
+        }
+        return;
+      }
+    }
+
+    // верблюд: увидел пешехода — бежит за ним и харкается
+    if (camel.active && !admin.noHazards) {
+      var ac = Math.abs(track.norm(camel.dist - w.dist + track.length / 2) - track.length / 2);
+      if (ac < 90 && !camel.chase) {
+        camel.chase = w;
+        camel.spit = 1.5;
+        sfx.camelRoar(Math.max(0, 1 - camera.position.distanceTo(camel.mesh.position) / 160));
+        flash('Верблюд заметил тебя и бежит следом!', '#e0b070');
+      }
+    }
+  }
+
+  function knockWalker(r, w, reason) {
+    if (w.stun > 0) return;
+    w.stun = 4;
+    sfx.thud();
+    music.duck(1);
+    flash(r.name + ': ' + reason + '!', '#ff8a3d');
+    for (var i = 0; i < 8; i++) {
+      var p = w.mesh.position.clone();
+      p.y += 0.8;
+      smoke.emit(p, new THREE.Vector3((Math.random() - 0.5) * 4, 1.5 + Math.random() * 2,
+        (Math.random() - 0.5) * 4), 0.8, 0xd9c9a8);
+    }
+  }
+
+  /* Погоня верблюда за пешеходом с плевками. */
+  function updateCamelChase(dt) {
+    var w = camel.chase;
+    if (!w) return;
+    if (!camel.active || !w.owner.onFoot) { camel.chase = null; return; }
+
+    var diff = track.norm(w.dist - camel.dist + track.length / 2) - track.length / 2;
+    var step = Math.min(Math.abs(diff), 3.4 * dt) * (diff >= 0 ? 1 : -1);
+    camel.dist = track.norm(camel.dist + step);
+    camel.lane += Math.max(-2.2 * dt, Math.min(2.2 * dt, w.lane - camel.lane));
+    camel.walk += dt * 5;
+
+    var p = track.pointAt(camel.dist);
+    var n = track.sideAt(camel.dist);
+    var t = track.tangentAt(camel.dist);
+    camel.mesh.position.copy(p).addScaledVector(n, camel.lane);
+    camel.mesh.position.y = p.y;
+    camel.mesh.rotation.y = Math.atan2(t.x, t.z) + (diff >= 0 ? 0 : Math.PI);
+    var ud = camel.mesh.userData;
+    for (var i = 0; i < ud.legs.length; i++) ud.legs[i].rotation.x = Math.sin(camel.walk + i * 1.7) * 0.6;
+
+    var dist = Math.abs(diff);
+    camel.spit -= dt;
+    if (camel.spit <= 0 && dist < 14) {
+      camel.spit = 2.4 + Math.random() * 1.6;
+      var vol = Math.max(0, 1 - camera.position.distanceTo(camel.mesh.position) / 140);
+      sfx.camelSpit(vol);
+      // плевок летит зелёной кляксой
+      for (var s = 0; s < 6; s++) {
+        var sp = camel.mesh.position.clone();
+        sp.y += 3.2;
+        smoke.emit(sp, new THREE.Vector3((Math.random() - 0.5) * 3, 1 + Math.random() * 2,
+          (Math.random() - 0.5) * 3), 0.7, 0x9fc46a);
+      }
+      if (dist < 9 && w.stun <= 0) {
+        w.stun = 3;
+        flash(w.owner.name + ': верблюд заплевал с ног до головы!', '#9fc46a');
+        sfx.splat(vol);
+      }
+    }
+    // догнал вплотную — толкает
+    if (dist < 3.4 && w.stun <= 0) knockWalker(w.owner, w, 'верблюд сбил тебя с ног');
   }
 
   /* ---------------- Бабушки на дороге ---------------- */
@@ -788,6 +1443,7 @@
     for (var i = 0; i < racers.length; i++) {
       var r = racers[i];
       if (r.dq || r.finished || r.speed < 0.5) continue;
+      if (r.soarY > 1) continue;               // летит над дорогой — никого не собьёт
       for (var k = 0; k < grannies.length; k++) {
         var g = grannies[k];
         if (!g.active) continue;
@@ -898,6 +1554,8 @@
         status: null,
         puddleCooldown: 0,
         air: 0,            // насколько печка сейчас оторвалась от дороги
+        soarLeft: 0,       // сколько ещё лететь на солнечных руках
+        soarY: 0,          // текущая высота полёта над дорогой
         flying: false,
         flyY: 0,
         flyVel: 0,
@@ -918,9 +1576,11 @@
         smokeAcc: 0,
         bob: Math.random() * 10,
         ai: {
-          reaction: 0.18 + Math.random() * 0.55,
-          reckless: Math.random(),
-          skill: 0.87 + Math.random() * 0.13
+          reaction: difficulty.reaction[0] + Math.random() * difficulty.reaction[1],
+          reckless: difficulty.reckless[0] +
+            Math.random() * (difficulty.reckless[1] - difficulty.reckless[0]),
+          skill: difficulty.skill[0] + Math.random() * difficulty.skill[1],
+          boost: !isHuman && Math.random() < difficulty.boost
         }
       };
       r.lane = Math.max(-EDGE_LANE, Math.min(EDGE_LANE, r.lane));
@@ -936,11 +1596,12 @@
     var t = track.tangentAt(r.dist);
     var n = track.sideAt(r.dist);
     r.mesh.position.copy(p).addScaledVector(n, r.lane);
-    r.mesh.position.y = p.y + (r.air || 0);
+    r.mesh.position.y = p.y + (r.air || 0) + (r.soarY || 0);
     // печка смотрит туда, куда едет: доворот от руля, наклон по горке и крен
     var drift = Math.atan2(r.steer * STEER_RATE * 0.6, Math.max(r.speed, 6));
     r.mesh.rotation.y = Math.atan2(t.x, t.z) - drift;
-    r.mesh.rotation.x = -Math.atan(track.slopeAt(r.dist)) * (r.air > 0.1 ? 0.4 : 1);
+    r.mesh.rotation.x = -Math.atan(track.slopeAt(r.dist)) * (r.air > 0.1 ? 0.4 : 1) *
+      (r.soarY > 0.2 ? 0.25 : 1);
     r.mesh.rotation.z = -r.steer * 0.045 * Math.min(1, r.speed / 12) + (r.skid || 0) * 0.035;
   }
 
@@ -1051,6 +1712,7 @@
       for (var j = i + 1; j < racers.length; j++) {
         var a = racers[i], b = racers[j];
         if (a.dq && b.dq) continue;
+        if (Math.abs((a.soarY || 0) - (b.soarY || 0)) > 2.5) continue;   // один летит выше
 
         var dd = a.dist - b.dist;
         var dl = a.lane - b.lane;
@@ -1171,7 +1833,9 @@
       } else {
         r.throttle = aiThrottle(r);
         r.steer = aiSteer(r);
-        wantBoost = false;               // компьютер турбо не получает
+        // турбо компьютеру достаётся только на высокой сложности
+        wantBoost = r.ai.boost && r.throttle && r.steam > 55 &&
+          !obstacleAhead(r, 26) && r.speed > MAX_SPEED * 0.75;
       }
 
       // супер-пар: пока держат кнопку и есть пар в котле
@@ -1188,7 +1852,8 @@
       }
       if (admin.infiniteSteam && r.canBoost) r.steam = 100;
 
-      var onEdge = Math.abs(r.lane) > EDGE_LANE;
+      var soaring = r.soarY > 1;
+      var onEdge = Math.abs(r.lane) > EDGE_LANE && !soaring;
       var skill = r.isHuman ? 1 : r.ai.skill * (admin.weakAI ? 0.75 : 1);
       var maxV = (r.boosting ? BOOST_SPEED : MAX_SPEED) * skill * (onEdge ? EDGE_PENALTY : 1);
       var accel = r.boosting ? BOOST_ACCEL : ACCEL;
@@ -1199,9 +1864,15 @@
       // горки: в подъём тянет назад и режет потолок скорости,
       // под уклон печка разгоняется сверх обычного предела
       var slope = track.slopeAt(r.dist);
-      if (slope > 0) maxV *= Math.max(0.5, 1 - slope * 2.2);
-      r.speed = Math.max(0, r.speed - HILL_PULL * slope * dt);
-      r.speed = Math.min(r.speed, maxV * DOWNHILL_CAP);
+      if (soaring) {
+        slope = 0;                                  // в воздухе горок нет
+        maxV = MAX_SPEED * 1.18;
+        if (r.throttle) r.speed = Math.min(maxV, r.speed + ACCEL * 1.2 * dt);
+      } else {
+        if (slope > 0) maxV *= Math.max(0.5, 1 - slope * 2.2);
+        r.speed = Math.max(0, r.speed - HILL_PULL * slope * dt);
+        r.speed = Math.min(r.speed, maxV * DOWNHILL_CAP);
+      }
 
       r.slope = slope;
 
@@ -1209,8 +1880,9 @@
       // Внимание: track.sideAt() смотрит ВЛЕВО от движения, поэтому
       // «вправо» (steer = +1) — это уменьшение полосы.
       // В заносе после лужи и в полёте руль почти бесполезен.
-      var wet = storm.kind === 'rain' ? storm.level : 0;
-      var grip = (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1) * (1 - wet * 0.25);
+      var wet = (storm.kind === 'rain' || storm.kind === 'snow') ? storm.level : 0;
+      var grip = soaring ? 1.2
+        : (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1) * (1 - wet * 0.25);
       r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * grip;
 
       if (r.skid !== 0) {
@@ -1234,16 +1906,19 @@
       }
     }
 
+    updateSoar(r, dt);
+
     r.prevDist = r.dist;
     r.dist += r.speed * dt;
 
     // Полёт считаем уже по новому положению: пока печка в воздухе, дорога
     // из-под неё уходит вниз, и сравнивать надо с высотой там, куда она попала.
-    if (!r.dq && !r.finished) updateJump(r, dt, r.slope);
+    if (!r.dq && !r.finished && r.soarY < 0.2) updateJump(r, dt, r.slope);
 
     // проверка перекрёстков
     for (var i = 0; i < intersections.length; i++) {
       var it = intersections[i];
+      if (r.soarY > 1) break;                  // над светофором красный не страшен
       if (crossedIntersection(r, it) && it.state === 'red') {
         disqualify(r, 'проехал на красный');
         r.dist = r.prevDist;
@@ -1329,7 +2004,7 @@
 
   function aiSteer(r) {
     var target = r.homeLane;
-    var ob = obstacleAhead(r, 30);
+    var ob = obstacleAhead(r, 30 * difficulty.avoid);
     if (ob) {
       // объезжаем с той стороны, где больше места до края
       var dir = ob.obj.lane <= 0 ? 1 : -1;
@@ -1355,6 +2030,15 @@
       var needG = (r.speed * r.speed) / (2 * BRAKE) + r.speed * r.ai.reaction + 4;
       var close = Math.abs(ob.obj.lane - r.lane) < 2.6;
       if (ob.gap < needG && close && r.speed > 3) return false;
+    }
+
+    // радар впереди: осторожные сбрасывают заранее, лихачи проскакивают
+    var sg = nextSign(r);
+    if (sg && r.soarY < 1) {
+      var limitV = sg.sign.limit / 3.6;
+      var care = 1 - r.ai.reckless * 0.5 * difficulty.rules;
+      var needS = (r.speed * r.speed - limitV * limitV) / (2 * BRAKE) + r.speed * r.ai.reaction + 3;
+      if (r.speed > limitV && sg.gap < needS * care) return false;
     }
 
     // держится у стоп-линии, пока красный
@@ -1448,16 +2132,18 @@
       return pt.clone().addScaledVector(side, r.lane * laneShare).add(new THREE.Vector3(0, height, 0));
     }
 
+    var lift = r.soarY || 0;
     if (cameraMode === 0) {
-      desired.copy(behind(r.boosting ? 18.5 : 16, r.boosting ? 7.4 : 6.8, 0.85));
+      desired.copy(behind(r.boosting ? 18.5 : 16, (r.boosting ? 7.4 : 6.8) + lift, 0.85));
       look.addScaledVector(t, 13);
       look.y += 2.6;
     } else if (cameraMode === 1) {
-      desired.copy(behind(30, 15, 0.5));
+      desired.copy(behind(30, 15 + lift, 0.5));
       look.addScaledVector(t, 24);
       look.y += 3;
     } else {
       desired.copy(r.mesh.position).add(new THREE.Vector3(0, 70, 0)).addScaledVector(t, -7);
+      desired.y = r.mesh.position.y + 70;
       look.y += 1;
     }
 
@@ -1532,6 +2218,19 @@
     ui.lightDist.textContent = Math.max(0, Math.round(ni.toStop)) + ' м';
     var danger = st === 'red' && ni.toStop < (f.speed * f.speed) / (2 * BRAKE) + 6 && f.speed > 2;
     ui.lightBox.className = 'light-box' + (danger ? ' danger' : '');
+
+    // знак ограничения впереди: показываем норму и предупреждаем о радаре
+    var sg = nextSign(f);
+    if (sg && sg.gap < 220 && f.soarY < 1) {
+      var kmh = f.speed * 3.6;
+      var over = kmh > sg.sign.limit + 5 && sg.gap < 140;
+      ui.limitNum.textContent = sg.sign.limit;
+      ui.limitText.innerHTML = Math.round(sg.gap) + ' м до радара' +
+        (over ? ' · <b>СБРОСЬ!</b>' : '');
+      ui.limitBox.className = 'show' + (over ? ' over' : '');
+    } else {
+      ui.limitBox.className = '';
+    }
 
     // котёл показываем только у того, кому доступно турбо
     ui.steamBox.style.display = f.canBoost ? '' : 'none';
@@ -1640,11 +2339,14 @@
       updateGrannies(dt);
       updatePolice(dt);
       updateAnimals(dt);
+      updateCoin(dt);
+      updateSigns(dt);
       for (var i = 0; i < racers.length; i++) updateRacer(racers[i], dt);
       resolveContacts();
       checkGrannyHits();
       checkHazardHits();
       checkPuddles(dt);
+      checkSpeedSigns();
       for (var pi = 0; pi < racers.length; pi++) {
         if (!racers[pi].dq) placeRacer(racers[pi]);
       }
@@ -1656,6 +2358,11 @@
       else if (humansDone) { overTimer += dt; if (overTimer > 3) showResults(); }
     }
 
+    if (state !== 'menu') {
+      updatePedestrians(dt);
+      updateBirds(dt);
+      updateSunHands(dt);
+    }
     if (smoke) smoke.update(dt);
     if (storm.system && state !== 'menu') { updateStorm(dt); updateHeli(dt); }
     var f = (state === 'menu') ? null : focusRacer();
@@ -1793,6 +2500,7 @@
     randomizeLights();
     resetGrannies();
     resetHazards();
+    resetCoin();
     buildPedals(humanCount);
     touchThrottle = {};
     touchSteer = {};
@@ -1963,6 +2671,18 @@
         camel.speed = 0.25;
       }
     });
+    document.getElementById('adm-coin').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f) return;
+      coin.active = true;
+      coin.mesh.visible = true;
+      coin.dist = track.norm(f.dist + 25);
+      coin.lane = f.lane;
+      placeCoin();
+    });
+    document.getElementById('adm-birds').addEventListener('click', function () {
+      spawnFlock();
+    });
     document.getElementById('adm-restart').addEventListener('click', function () {
       startRace(lastHumans, totalLaps);
     });
@@ -1998,6 +2718,9 @@
     ui.jail = document.getElementById('jail-warn');
     ui.jailText = document.getElementById('jail-text');
     ui.storm = document.getElementById('storm-warn');
+    ui.limitBox = document.getElementById('limit-box');
+    ui.limitNum = document.getElementById('limit-num');
+    ui.limitText = document.getElementById('limit-text');
     ui.pedals = [];
 
     initRenderer();
@@ -2026,6 +2749,32 @@
         lapBtns.forEach(function (x) { x.classList.toggle('sel', x === b); });
       });
     });
+
+    // выбор карты: город пересобирается сразу, чтобы его было видно из меню
+    var mapBtns = document.querySelectorAll('#maps button');
+    var mapNote = document.getElementById('map-note');
+    mapBtns.forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (b.dataset.m === mapId) return;
+        mapBtns.forEach(function (x) { x.classList.toggle('sel', x === b); });
+        buildScenery(b.dataset.m);
+        mapNote.textContent = World.theme.hint;
+        document.title = 'Гонки на печках — ' + World.theme.title;
+      });
+    });
+    mapNote.textContent = World.theme.hint;
+
+    // выбор сложности
+    var diffBtns = document.querySelectorAll('#diffs button');
+    var diffNote = document.getElementById('diff-note');
+    diffBtns.forEach(function (b) {
+      b.addEventListener('click', function () {
+        difficulty = DIFFICULTIES[b.dataset.d] || DIFFICULTIES.normal;
+        diffBtns.forEach(function (x) { x.classList.toggle('sel', x === b); });
+        diffNote.textContent = difficulty.hint;
+      });
+    });
+    diffNote.textContent = difficulty.hint;
     document.getElementById('start').addEventListener('click', function () {
       startRace(chosen, lapsChosen);
     });
@@ -2083,6 +2832,11 @@
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
       storm: { active: storm.active, kind: storm.kind, level: +storm.level.toFixed(2) },
+      map: mapId, difficulty: difficulty.id,
+      coin: coin && coin.active ? { dist: Math.round(coin.dist), lane: +coin.lane.toFixed(1) } : null,
+      birds: birds.filter(function (b) { return b.active; }).length,
+      peds: pedestrians.filter(function (p) { return p.mesh.visible; }).length,
+      signs: signs.map(function (g) { return g.limit; }),
       heli: heli ? heli.active : false,
       police: police.filter(function (c) { return c.active; }).map(function (c) {
         return { dist: Math.round(c.dist), lane: +c.lane.toFixed(1), left: +c.timer.toFixed(1) };
@@ -2097,6 +2851,7 @@
           steam: Math.round(r.steam), boosting: r.boosting,
           reason: r.dqReason || null, rider: r.rider,
           jail: +r.jail.toFixed(1), jailReason: r.jailReason || null, skid: +r.skid.toFixed(2),
+          soar: +(r.soarY || 0).toFixed(1), soarLeft: +(r.soarLeft || 0).toFixed(1),
           throttle: r.throttle,
           height: +track.heightAt(r.dist).toFixed(1),
           slope: +(track.slopeAt(r.dist) * 100).toFixed(1),

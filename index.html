@@ -29,6 +29,7 @@
     overflow: auto;
   }
   #menu.show { display: flex; }
+  #menu .card { margin: auto; }
   .card {
     width: min(720px, 100%); background: var(--panel); backdrop-filter: blur(8px);
     border: 1px solid rgba(255,255,255,0.14); border-radius: 20px; padding: 22px 24px 26px;
@@ -36,29 +37,48 @@
   }
   h1 { margin: 0 0 4px; font-size: clamp(24px, 4.6vw, 40px); letter-spacing: -0.5px; }
   h1 span { color: var(--gold); }
-  .sub { margin: 0 0 18px; color: #b9c6da; font-size: 14px; line-height: 1.5; }
-  .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1.4px; color: #8fa2bd; margin: 16px 0 8px; }
+  .sub { margin: 0 0 12px; color: #b9c6da; font-size: 14px; line-height: 1.5; }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1.4px; color: #8fa2bd; margin: 12px 0 6px; }
   .btns { display: flex; flex-wrap: wrap; gap: 8px; }
   .btns button {
-    min-width: 48px; padding: 11px 15px; font-size: 16px; font-weight: 700; cursor: pointer;
+    min-width: 44px; padding: 9px 13px; font-size: 15px; font-weight: 700; cursor: pointer;
     color: var(--ink); background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.18);
     border-radius: 12px; transition: transform .08s, background .15s, border-color .15s;
   }
   .btns button:hover { background: rgba(255,255,255,0.14); }
   .btns button:active { transform: translateY(1px); }
   .btns button.sel { background: var(--gold); color: #22160a; border-color: var(--gold); }
-  #ai-note { font-size: 13px; color: #9fb2cc; margin-top: 8px; }
+  #ai-note, .note { font-size: 13px; color: #9fb2cc; margin-top: 8px; }
+  #limit-box {
+    position: absolute; top: 150px; right: 14px;
+    display: none; align-items: center; gap: 9px; padding: 7px 14px 7px 8px;
+    background: var(--panel); border-radius: 40px; border: 1px solid rgba(255,255,255,0.12);
+  }
+  #limit-box.show { display: flex; }
+  #limit-num {
+    width: 42px; height: 42px; border-radius: 50%; background: #f5f2ea; color: #17171b;
+    border: 5px solid #d02b23; font-weight: 800; font-size: 17px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #limit-text { font-size: 13px; color: #cdd9ea; }
+  #limit-box.over { border-color: #ff4040; animation: alarm .45s infinite alternate; }
+  #limit-box.over #limit-text { color: #ff8a7a; }
   #key-hints { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .kh {
     font-size: 12px; padding: 5px 9px; border-radius: 9px;
     border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.05);
   }
   .kh b { color: var(--gold); }
-  .rules { margin: 18px 0 0; padding: 14px 16px; border-radius: 14px;
+  .rules { margin: 14px 0 0; padding: 12px 16px 14px; border-radius: 14px;
     background: rgba(255,210,63,0.08); border: 1px solid rgba(255,210,63,0.28); font-size: 13.5px; line-height: 1.6; }
+  .rules summary { cursor: pointer; font-weight: 800; color: var(--gold); list-style: none; }
+  .rules summary::marker, .rules summary::-webkit-details-marker { display: none; }
+  .rules summary::after { content: ' ▾'; }
+  .rules[open] summary::after { content: ' ▴'; }
+  .rules .body { margin-top: 10px; }
   .rules b { color: var(--gold); }
   #start, #again, #to-menu {
-    margin-top: 20px; width: 100%; padding: 16px; font-size: 19px; font-weight: 800; cursor: pointer;
+    margin-top: 14px; width: 100%; padding: 16px; font-size: 19px; font-weight: 800; cursor: pointer;
     border: none; border-radius: 14px; color: #22160a;
     background: linear-gradient(180deg, #ffe07a, #f5b31f);
     box-shadow: 0 12px 30px rgba(245,179,31,0.35);
@@ -234,6 +254,8 @@
     #watching { font-size: 11px; }
     /* на узком экране от светофора остаётся лампа и расстояние */
     .light-box { gap: 6px; padding: 7px 9px; }
+    #limit-box { top: 118px; right: 8px; padding: 5px 9px 5px 5px; }
+    #limit-text { display: none; }
     #light-text { display: none; }
     #light-lamp { width: 16px; height: 16px; }
     #light-dist { font-size: 13px; }
@@ -279,6 +301,7 @@
     </div>
   </div>
 
+  <div id="limit-box"><span id="limit-num">60</span><span id="limit-text">км/ч</span></div>
   <div id="granny-warn">🧕 БАБУШКА НА ДОРОГЕ <span id="granny-dist">0 м</span></div>
   <div id="storm-warn">🌪 ПЕСЧАНАЯ БУРЯ</div>
   <div id="jail-warn"><span id="jail-text">ТЮРЬМА</span></div>
@@ -328,6 +351,10 @@
       <button id="adm-police">Полицию сюда</button>
     </div>
     <div class="arow">
+      <button id="adm-coin">Монетку сюда</button>
+      <button id="adm-birds">Птички</button>
+    </div>
+    <div class="arow">
       <button id="adm-free">Выпустить из тюрьмы</button>
     </div>
 
@@ -339,9 +366,9 @@
 
 <div id="menu" class="show">
   <div class="card">
-    <h1>Гонки на <span>печках</span> в Дубае</h1>
-    <p class="sub">Русская печка на колёсах, песок, небоскрёбы, шесть перекрёстков со светофорами
-      и бабушки на переходах. Газ, руль и супер-пар — всё под музыку.</p>
+    <h1>Гонки на <span>печках</span></h1>
+    <p class="sub">Русская печка на колёсах: пять городов, шесть перекрёстков со светофорами,
+      бабушки на переходах, радары, верблюды и солнечная монетка. Газ, руль и супер-пар — под музыку.</p>
 
     <div class="label">Сколько живых игроков</div>
     <div class="btns" id="players">
@@ -352,33 +379,57 @@
     <div id="ai-note">За остальных 7 печек играет компьютер</div>
     <div id="key-hints"></div>
 
+    <div class="label">Карта</div>
+    <div class="btns" id="maps">
+      <button data-m="dubai" class="sel">Дубай</button><button data-m="moscow">Москва</button>
+      <button data-m="yoshkar">Йошкар-Ола</button><button data-m="tokyo">Токио</button>
+      <button data-m="paris">Париж</button>
+    </div>
+    <div class="note" id="map-note">песок, небоскрёбы, Бурдж-Халифа</div>
+
+    <div class="label">Сложность</div>
+    <div class="btns" id="diffs">
+      <button data-d="easy">Новичок</button><button data-d="normal" class="sel">Обычная</button>
+      <button data-d="hard">Сложная</button><button data-d="insane">Печные асы</button>
+    </div>
+    <div class="note" id="diff-note">кто-то осторожный, кто-то лихач</div>
+
     <div class="label">Кругов</div>
     <div class="btns" id="laps">
       <button data-n="1">1</button><button data-n="2" class="sel">2</button><button data-n="3">3</button>
     </div>
 
-    <div class="rules">
-      <b>Правила.</b> На перекрёстках светофоры переключаются сами.
-      Проехал стоп-линию на <b>красный</b> — <b>дисквалификация</b>, печка глохнет.
-      Загорелся <b>зелёный</b> — слышен гудок паровоза, можно жать.
-      Жёлтый — предупреждение, ехать ещё можно.<br>
+    <details class="rules">
+      <summary>Правила и управление</summary>
+      <div class="body">
+      <b>Светофоры.</b> На перекрёстках свет переключается сам. Проехал стоп-линию на
+      <b>красный</b> — <b>дисквалификация</b>, печка глохнет. Загорелся <b>зелёный</b> —
+      слышен гудок паровоза, можно жать. Жёлтый — предупреждение, ехать ещё можно.<br>
+      <b>Радары.</b> Вдоль трассы стоят знаки <b>60</b> и <b>80 км/ч</b> с камерой.
+      Проехал знак быстрее — <b>штраф: пять секунд тюрьмы</b>. В HUD видно, сколько
+      метров до радара.<br>
       <b>Бабушки.</b> По зебре и просто где им удобно дорогу переходят бабушки.
-      <b>Сбил бабушку — снятие с гонки</b>, так что руль в руки и объезжай.
-      Нарушительниц забирает полиция: машина встаёт прямо на дороге, и её надо
-      объехать. <b>Врезался в полицейскую машину — тюрьма на 30 секунд.</b><br>
-      <b>Дорога живая.</b> Иногда выходит верблюд: <b>врезался — печь рассыпается
-      и ты в тюрьме до конца гонки</b>. Пробегает гигантская лакукарача — заденешь,
-      потеряешь ход. На асфальте попадаются лужи: заехал — занос. Иногда налетает
-      <b>песчаная буря</b> и на 10–15 секунд не видно ничего. Сверху пролетает
+      <b>Сбил бабушку — снятие с гонки.</b> Подъехал вплотную — лупит тростью по печи.
+      Нарушительниц забирает полиция: машина встаёт прямо на дороге.
+      <b>Врезался в полицейскую машину — тюрьма на 30 секунд.</b><br>
+      <b>Дорога живая.</b> По тротуарам ходят люди, над трассой пролетают птички,
+      иногда выходит верблюд: <b>врезался — печь рассыпается и ты в тюрьме до конца
+      гонки</b>. Пробегает гигантская лакукарача, на асфальте попадаются лужи —
+      заехал, занос. Налетает буря, ливень или снегопад, сверху проносится
       полицейский вертолёт.<br>
+      <b>Солнечная монетка.</b> Одна на трассе, светится золотом. Собрал — <b>солнце
+      протягивает руки и несёт печку на высоте 20 метров двадцать секунд</b>: над
+      светофорами, бабушками и соперниками, и всё это время тебе никто не страшен.<br>
       <b>Управление.</b> У каждого игрока свой газ и свой руль (см. выше).
       Держишь газ — разгон, отпустил — торможение. Съехал на обочину — теряешь скорость.
       <b>Супер-ускорение Z</b> есть только у первого игрока: жжёт пар из котла,
-      котёл потом сам наполняется. У компьютера турбо нет.<br>
+      котёл потом сам наполняется. На «Сложной» и «Печных асах» турбо появляется
+      и у компьютера.<br>
       <b>Прочее.</b> <b>C</b> — камера на другую печку, <b>V</b> — вид,
       <b>X</b> — звук, <b>Y</b> — музыка, <b>A</b> — админ-панель.
       На телефоне под экраном кнопки ◀ газ ▶ и ТУРБО.
-    </div>
+      </div>
+    </details>
 
     <button id="start">Поехали!</button>
   </div>

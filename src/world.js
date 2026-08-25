@@ -948,7 +948,7 @@
       fog: 0xcbb489, clear: 0xbcd3e6, fogDensity: 0.0013,
       facades: ['glass', 'sand', 'white', 'stripe'],
       heights: [26, 190], capColor: 0x8d9aa6,
-      trees: 'palm', treeCount: 96, dunes: true,
+      trees: 'palm', treeCount: 96, dunes: true, cacti: true,
       weather: ['sand', 'rain'],
       landmarks: 'dubai'
     },
@@ -1190,6 +1190,22 @@
       var sm = World.treeMaterials('spruce');
       group.add(new THREE.Mesh(World.mergeGeometries(extraTrunks), sm.trunk));
       group.add(new THREE.Mesh(World.mergeGeometries(extraLeaves), sm.leaf));
+    }
+
+    // Кактусы: колючий подлесок пустыни между пальмами
+    if (theme.cacti) {
+      var cactusGeos = [];
+      for (var c1 = 0; c1 < 70; c1++) {
+        var cd = track.length * c1 / 70 + 18;
+        var cp = track.pointAt(cd);
+        var cn = track.sideAt(cd);
+        var cs = (c1 % 2 === 0) ? -1 : 1;
+        var coff = World.roadFootprint(track, cd) + 5 + Math.random() * 16;
+        var cpos = cp.clone().addScaledVector(cn, cs * coff);
+        World.cactusGeometry(cpos.x + (Math.random() - 0.5) * 6,
+                             cpos.z + (Math.random() - 0.5) * 6, cactusGeos);
+      }
+      group.add(new THREE.Mesh(World.mergeGeometries(cactusGeos), World.cactusMaterial()));
     }
 
     // Дюны — только там, где вокруг пустыня
@@ -3258,6 +3274,36 @@
     this.points.visible = false;
     scene.add(this.points);
     this.fall = new THREE.Vector3(-8, -52, 3);
+
+    // снежинка: мягкий пушистый кружок — та же система, другой режим
+    this.rainTex = tex;
+    this.snowTex = canvasTexture(32, 32, function (g, w, h) {
+      g.clearRect(0, 0, w, h);
+      var grd = g.createRadialGradient(16, 16, 1, 16, 16, 15);
+      grd.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grd.addColorStop(0.5, 'rgba(240,248,255,0.55)');
+      grd.addColorStop(1, 'rgba(230,240,255,0)');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, w, h);
+    });
+    this.mode = 'rain';
+  };
+
+  /* Тот же поток частиц умеет быть и снегопадом: медленнее и пушистее. */
+  World.RainSystem.prototype.setMode = function (mode) {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    var m = this.points.material;
+    if (mode === 'snow') {
+      m.map = this.snowTex;
+      m.size = 1.5;
+      this.fall.set(-2.6, -6.5, 1.4);
+    } else {
+      m.map = this.rainTex;
+      m.size = 2.6;
+      this.fall.set(-8, -52, 3);
+    }
+    m.needsUpdate = true;
   };
 
   World.RainSystem.prototype.update = function (dt, level, camPos) {
@@ -3533,6 +3579,581 @@
       p.spr.scale.set(sz, sz, 1);
       p.spr.material.opacity = 0.55 * (1 - k);
     }
+  };
+
+  /* ---------- Тротуары ---------- */
+
+  function sidewalkTexture() {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#c6bfae';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 2600; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,252,240,0.22)' : 'rgba(120,112,96,0.2)';
+        g.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+      }
+      // швы между плитами 2×2
+      g.strokeStyle = 'rgba(96,90,78,0.55)';
+      g.lineWidth = 2;
+      for (var k = 0; k <= 2; k++) {
+        g.beginPath(); g.moveTo(k * w / 2, 0); g.lineTo(k * w / 2, h); g.stroke();
+        g.beginPath(); g.moveTo(0, k * h / 2); g.lineTo(w, k * h / 2); g.stroke();
+      }
+    });
+  }
+
+  /* Тротуар с бордюром по обеим сторонам дороги — по нему ходят люди.
+     Лежит за краем асфальта, печкам туда не заехать. */
+  World.sidewalkMesh = function (track) {
+    var inner = track.width / 2 + 0.6;
+    var outer = track.width / 2 + 4.6;
+    var top = 0.3;
+    var N = 500;
+    var pos = [], uv = [], idx = [];
+    var base = 0;
+    for (var s = 0; s < 2; s++) {
+      var sign = s === 0 ? 1 : -1;
+      for (var i = 0; i <= N; i++) {
+        var d = track.length * i / N;
+        var p = track.pointAt(d);
+        var n = track.sideAt(d);
+        var a = p.clone().addScaledVector(n, sign * inner);
+        var b = p.clone().addScaledVector(n, sign * outer);
+        var v = d / 5;
+        pos.push(a.x, p.y + 0.02, a.z);     // низ бордюра
+        pos.push(a.x, p.y + top, a.z);      // верх бордюра
+        pos.push(b.x, p.y + top, b.z);      // внешний край
+        uv.push(0, v, 0.14, v, 1, v);
+        if (i < N) {
+          var q = base + i * 3;
+          idx.push(q, q + 3, q + 1, q + 1, q + 3, q + 4);          // бордюр
+          idx.push(q + 1, q + 4, q + 2, q + 2, q + 4, q + 5);      // плитка
+        }
+      }
+      base += (N + 1) * 3;
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+      map: sidewalkTexture(), color: World.theme.sidewalk || 0xffffff
+    }));
+  };
+
+  World.sidewalkOffset = function (track) { return track.width / 2 + 2.6; };
+
+  /* ---------- Пешеходы ---------- */
+
+  /* Цвета пешеходов сложены в одну палитру-текстуру: тогда вся фигурка
+     склеивается в пару сеток и не съедает draw call'ы. */
+  var PED_COLORS = [
+    '#e9bd97', '#cd935f', '#8d5a3b',                                  // 0..2 кожа
+    '#241d16', '#6b4b2a', '#c9b287', '#8d8d8d',                       // 3..6 волосы
+    '#e14b4b', '#3f7fd8', '#39b06a', '#f0c23c', '#8a5cc4', '#eae6de', // 7..12 верх
+    '#2c3550', '#42506b', '#6b5f4a', '#22242a',                       // 13..16 низ
+    '#f6f4ee', '#e2ded2', '#1a1a1e', '#c9433c', '#2f6f5a'             // 17..21 роба, обувь, сумка
+  ];
+  var PED_PALETTE = null;
+  function pedPalette() {
+    if (PED_PALETTE) return PED_PALETTE;
+    var c = document.createElement('canvas');
+    c.width = 32; c.height = 1;
+    var g = c.getContext('2d');
+    for (var i = 0; i < 32; i++) {
+      g.fillStyle = PED_COLORS[i] || '#888888';
+      g.fillRect(i, 0, 1, 1);
+    }
+    PED_PALETTE = new THREE.CanvasTexture(c);
+    PED_PALETTE.magFilter = THREE.NearestFilter;
+    PED_PALETTE.minFilter = THREE.NearestFilter;
+    PED_PALETTE.generateMipmaps = false;
+    PED_PALETTE.encoding = THREE.sRGBEncoding;
+    return PED_PALETTE;
+  }
+
+  /* Красим геометрию «цветом номер i», перекидывая все её UV в один пиксель палитры. */
+  function paint(geo, i) {
+    var uv = geo.attributes.uv;
+    var u = (i + 0.5) / 32;
+    for (var k = 0; k < uv.count; k++) uv.setXY(k, u, 0.5);
+    uv.needsUpdate = true;
+    return geo;
+  }
+
+  function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+  /* Человек на тротуаре: горожанин, дама в юбке или араб в кандуре.
+     Ноги — отдельные сетки, чтобы шагали. */
+  World.buildPedestrian = function (kind) {
+    var g = new THREE.Group();
+    var mat = new THREE.MeshLambertMaterial({ map: pedPalette() });
+    kind = kind || pick(['man', 'woman', 'thobe', 'man', 'woman']);
+
+    var skin = pick([0, 0, 1, 1, 2]);
+    var hair = pick([3, 3, 4, 5, 6]);
+    var shirt = pick([7, 8, 9, 10, 11, 12]);
+    var pants = pick([13, 14, 15, 16]);
+    var tall = 0.92 + Math.random() * 0.16;
+    if (kind === 'thobe') { shirt = 17; pants = 17; }
+
+    // ноги: две отдельные сетки с осью вращения в бедре
+    var legs = [];
+    for (var s = -1; s <= 1; s += 2) {
+      var lg = new THREE.Group();
+      lg.position.set(s * 0.13, 0.82, 0);
+      var parts = [];
+      var shin = new THREE.CylinderGeometry(0.075, 0.065, 0.8, 7);
+      shin.translate(0, -0.4, 0);
+      parts.push(paint(shin, kind === 'woman' && Math.random() < 0.5 ? skin : pants));
+      var shoe = new THREE.BoxGeometry(0.15, 0.1, 0.28);
+      shoe.translate(0, -0.83, 0.05);
+      parts.push(paint(shoe, 19));
+      var leg = new THREE.Mesh(World.mergeGeometries(parts), mat);
+      lg.add(leg);
+      g.add(lg);
+      legs.push(lg);
+    }
+
+    // корпус, руки и голова — одной сеткой
+    var body = [];
+    if (kind === 'woman') {
+      var skirt = new THREE.CylinderGeometry(0.19, 0.3, 0.5, 12);
+      skirt.translate(0, 0.86, 0);
+      body.push(paint(skirt, pants));
+    } else if (kind === 'thobe') {
+      var robe = new THREE.CylinderGeometry(0.2, 0.34, 1.12, 12);
+      robe.translate(0, 0.62, 0);
+      body.push(paint(robe, 17));
+    }
+    var torso = new THREE.CylinderGeometry(0.19, 0.21, 0.5, 12);
+    torso.translate(0, 1.12, 0);
+    body.push(paint(torso, shirt));
+    var shoulders = new THREE.SphereGeometry(0.2, 12, 8);
+    var msh = new THREE.Matrix4().makeScale(1.1, 0.6, 0.9);
+    msh.setPosition(0, 1.35, 0);
+    shoulders.applyMatrix4(msh);
+    body.push(paint(shoulders, shirt));
+
+    for (var ax = -1; ax <= 1; ax += 2) {
+      var arm = new THREE.CylinderGeometry(0.055, 0.05, 0.56, 7);
+      var ma = new THREE.Matrix4().makeRotationZ(ax * 0.12);
+      ma.setPosition(ax * 0.24, 1.06, 0);
+      arm.applyMatrix4(ma);
+      body.push(paint(arm, kind === 'thobe' ? 17 : shirt));
+      var hand = new THREE.SphereGeometry(0.06, 8, 6);
+      hand.translate(ax * 0.28, 0.78, 0);
+      body.push(paint(hand, skin));
+    }
+
+    var neck = new THREE.CylinderGeometry(0.06, 0.07, 0.1, 8);
+    neck.translate(0, 1.45, 0);
+    body.push(paint(neck, skin));
+    var head = new THREE.SphereGeometry(0.125, 14, 10);
+    var mh = new THREE.Matrix4().makeScale(0.92, 1.1, 0.95);
+    mh.setPosition(0, 1.58, 0);
+    head.applyMatrix4(mh);
+    body.push(paint(head, skin));
+    var nose = new THREE.ConeGeometry(0.03, 0.07, 6);
+    var mn = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+    mn.setPosition(0, 1.57, 0.12);
+    nose.applyMatrix4(mn);
+    body.push(paint(nose, skin));
+
+    if (kind === 'thobe') {
+      // гутра: белый платок и чёрный обруч
+      var cloth = new THREE.SphereGeometry(0.145, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
+      cloth.translate(0, 1.585, 0);
+      body.push(paint(cloth, 18));
+      var back = new THREE.BoxGeometry(0.24, 0.3, 0.1);
+      back.translate(0, 1.46, -0.11);
+      body.push(paint(back, 18));
+      var ring = new THREE.TorusGeometry(0.13, 0.022, 6, 14);
+      var mr = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      mr.setPosition(0, 1.64, 0);
+      ring.applyMatrix4(mr);
+      body.push(paint(ring, 19));
+    } else {
+      var cap = new THREE.SphereGeometry(0.132, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
+      cap.translate(0, 1.585, 0);
+      body.push(paint(cap, hair));
+      if (kind === 'woman') {                     // длинные волосы по спине
+        var mane = new THREE.BoxGeometry(0.2, 0.34, 0.11);
+        mane.translate(0, 1.44, -0.1);
+        body.push(paint(mane, hair));
+      }
+    }
+
+    if (Math.random() < 0.45) {                   // сумка через плечо
+      var bag = new THREE.BoxGeometry(0.22, 0.24, 0.1);
+      bag.translate(0.24, 0.95, 0.05);
+      body.push(paint(bag, pick([20, 21, 13])));
+    }
+
+    g.add(new THREE.Mesh(World.mergeGeometries(body), mat));
+    g.scale.setScalar(tall);
+    g.userData.legs = legs;
+    g.userData.kind = kind;
+    return g;
+  };
+
+  /* ---------- Дорожные знаки и плакаты ---------- */
+
+  World.speedSign = function (limit) {
+    var g = new THREE.Group();
+    var post = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 2.9, 8),
+      new THREE.MeshLambertMaterial({ color: 0x9aa0a6 }));
+    post.position.y = 1.45;
+    g.add(post);
+
+    var tex = canvasTexture(128, 128, function (ctx, w, h) {
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#f5f2ea';
+      ctx.beginPath(); ctx.arc(64, 64, 60, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 15;
+      ctx.strokeStyle = '#d02b23';
+      ctx.beginPath(); ctx.arc(64, 64, 52, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#17171b';
+      ctx.font = 'bold 58px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(limit), 64, 68);
+    });
+    var mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true,
+      side: THREE.DoubleSide, alphaTest: 0.4 });
+    for (var s = 0; s < 2; s++) {
+      var disc = new THREE.Mesh(new THREE.CircleGeometry(0.62, 24), mat);
+      disc.position.set(0, 2.7, s ? -0.045 : 0.045);
+      disc.rotation.y = s ? Math.PI : 0;
+      g.add(disc);
+    }
+
+    // камера-радар на кронштейне: понятно, что штраф выпишут
+    var cam = new THREE.Group();
+    var box = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.26, 0.5),
+      new THREE.MeshLambertMaterial({ color: 0x4a4f57 }));
+    cam.add(box);
+    var lens = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.12, 10),
+      new THREE.MeshLambertMaterial({ color: 0x1b1d22, emissive: 0x331010 }));
+    lens.rotation.x = Math.PI / 2;
+    lens.position.z = 0.28;
+    cam.add(lens);
+    cam.position.set(0, 3.45, 0.2);
+    g.add(cam);
+    g.userData.lens = lens;
+
+    var arm = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.55, 0.06),
+      new THREE.MeshLambertMaterial({ color: 0x9aa0a6 }));
+    arm.position.set(0, 3.15, 0.2);
+    g.add(arm);
+
+    g.userData.limit = limit;
+    return g;
+  };
+
+  /* Плакат у дороги с народной мудростью. */
+  World.billboard = function (lines, accent) {
+    var g = new THREE.Group();
+    var W = 7.6, H = 3.4;
+    var tex = canvasTexture(512, 232, function (ctx, w, h) {
+      var grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, '#f7f2e4');
+      grad.addColorStop(1, '#e6dcc4');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = accent || '#c0392b';
+      ctx.lineWidth = 12;
+      ctx.strokeRect(6, 6, w - 12, h - 12);
+      ctx.fillStyle = accent || '#c0392b';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      var size = lines.length > 1 ? 44 : 56;
+      for (var i = 0; i < lines.length; i++) {
+        var t = lines[i];
+        ctx.font = 'bold ' + size + 'px system-ui, -apple-system, sans-serif';
+        while (ctx.measureText(t).width > w - 60 && size > 20) {
+          size -= 2;
+          ctx.font = 'bold ' + size + 'px system-ui, -apple-system, sans-serif';
+        }
+        ctx.fillText(t, w / 2, h / 2 + (i - (lines.length - 1) / 2) * (size + 12));
+      }
+    });
+
+    var panel = new THREE.Mesh(new THREE.BoxGeometry(W, H, 0.18),
+      [new THREE.MeshLambertMaterial({ color: 0x8a8378 }),
+       new THREE.MeshLambertMaterial({ color: 0x8a8378 }),
+       new THREE.MeshLambertMaterial({ color: 0x8a8378 }),
+       new THREE.MeshLambertMaterial({ color: 0x8a8378 }),
+       new THREE.MeshLambertMaterial({ map: tex }),
+       new THREE.MeshLambertMaterial({ color: 0x6f6a62 })]);
+    panel.position.y = H / 2 + 2.6;
+    g.add(panel);
+
+    var legs = [];
+    for (var s = -1; s <= 1; s += 2) {
+      var leg = new THREE.CylinderGeometry(0.12, 0.14, 2.7, 8);
+      leg.translate(s * W * 0.32, 1.35, 0);
+      legs.push(leg);
+    }
+    var brace = new THREE.BoxGeometry(W * 0.72, 0.14, 0.14);
+    brace.translate(0, 2.2, 0);
+    legs.push(brace);
+    g.add(new THREE.Mesh(World.mergeGeometries(legs),
+      new THREE.MeshLambertMaterial({ color: 0x7d766c })));
+    return g;
+  };
+
+  World.BILLBOARDS = [
+    { lines: ['НЕ ПЕЙ ЗА РУЛЁМ!'], accent: '#c0392b' },
+    { lines: ['НЕ ГОНИ —', 'ТЕБЯ ДОМА ЖДЁТ СЕМЬЯ!'], accent: '#1f6f4a' },
+    { lines: ['ПРОПУСТИ БАБУШКУ —', 'ОНА ТОЖЕ ЧЬЯ-ТО МАМА'], accent: '#8a5cc4' },
+    { lines: ['ПЕЧЬ ЛЮБИТ ДРОВА,', 'А ДОРОГА — ТРЕЗВЫХ'], accent: '#b45309' }
+  ];
+
+  /* ---------- Кактусы ---------- */
+
+  World.cactusGeometry = function (x, z, geos) {
+    var h = 2.4 + Math.random() * 2.6;
+    var r = 0.26 + Math.random() * 0.12;
+    var trunk = new THREE.CylinderGeometry(r * 0.92, r, h, 9);
+    trunk.translate(x, h / 2, z);
+    geos.push(trunk);
+    var capTop = new THREE.SphereGeometry(r * 0.92, 9, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    capTop.translate(x, h, z);
+    geos.push(capTop);
+
+    var arms = Math.random() < 0.75 ? (Math.random() < 0.4 ? 2 : 1) : 0;
+    for (var a = 0; a < arms; a++) {
+      var side = a === 0 ? (Math.random() < 0.5 ? 1 : -1) : -1;
+      var ang = Math.random() * Math.PI * 2;
+      var dx = Math.cos(ang) * side, dz = Math.sin(ang) * side;
+      var base = h * (0.42 + Math.random() * 0.2);
+      var run = 0.55 + Math.random() * 0.3;
+      var armR = r * 0.72;
+      var horiz = new THREE.CylinderGeometry(armR, armR, run * 2, 8);
+      var mh = new THREE.Matrix4().makeRotationZ(Math.PI / 2);
+      mh.premultiply(new THREE.Matrix4().makeRotationY(-ang));
+      mh.setPosition(x + dx * run, base, z + dz * run);
+      horiz.applyMatrix4(mh);
+      geos.push(horiz);
+      var up = 0.9 + Math.random() * 1.1;
+      var vert = new THREE.CylinderGeometry(armR * 0.92, armR, up, 8);
+      vert.translate(x + dx * run * 2, base + up / 2, z + dz * run * 2);
+      geos.push(vert);
+      var tip = new THREE.SphereGeometry(armR * 0.92, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+      tip.translate(x + dx * run * 2, base + up, z + dz * run * 2);
+      geos.push(tip);
+    }
+
+    // рядом парочка «бочонков»
+    if (Math.random() < 0.5) {
+      var br = 0.35 + Math.random() * 0.3;
+      var ball = new THREE.SphereGeometry(br, 9, 7);
+      var mb = new THREE.Matrix4().makeScale(1, 0.75, 1);
+      mb.setPosition(x + (Math.random() - 0.5) * 3.4, br * 0.7, z + (Math.random() - 0.5) * 3.4);
+      ball.applyMatrix4(mb);
+      geos.push(ball);
+    }
+  };
+
+  World.cactusMaterial = function () {
+    return new THREE.MeshLambertMaterial({
+      map: canvasTexture(64, 64, function (g, w, h) {
+        g.fillStyle = '#4a7b45';
+        g.fillRect(0, 0, w, h);
+        for (var i = 0; i < 7; i++) {                 // рёбра
+          g.strokeStyle = i % 2 ? 'rgba(30,58,30,0.5)' : 'rgba(126,168,110,0.45)';
+          g.lineWidth = 3;
+          g.beginPath(); g.moveTo(i * w / 7 + 3, 0); g.lineTo(i * w / 7 + 3, h); g.stroke();
+        }
+        for (var k = 0; k < 130; k++) {               // колючки
+          g.fillStyle = 'rgba(240,232,190,0.7)';
+          g.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+        }
+      }, 1, 3)
+    });
+  };
+
+  /* ---------- Солнечная монетка ---------- */
+
+  World.buildCoin = function () {
+    var g = new THREE.Group();
+    var face = canvasTexture(128, 128, function (ctx, w, h) {
+      var grad = ctx.createRadialGradient(52, 46, 6, 64, 64, 64);
+      grad.addColorStop(0, '#fff6c8');
+      grad.addColorStop(0.6, '#ffd23f');
+      grad.addColorStop(1, '#c98f14');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#a9740c';
+      ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.arc(64, 64, 56, 0, Math.PI * 2); ctx.stroke();
+      // солнышко с лучами и лицом
+      ctx.strokeStyle = '#b1790c';
+      ctx.lineWidth = 5;
+      for (var i = 0; i < 12; i++) {
+        var a = i * Math.PI / 6;
+        ctx.beginPath();
+        ctx.moveTo(64 + Math.cos(a) * 30, 64 + Math.sin(a) * 30);
+        ctx.lineTo(64 + Math.cos(a) * 44, 64 + Math.sin(a) * 44);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#fff0b0';
+      ctx.beginPath(); ctx.arc(64, 64, 26, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8a5c05';
+      ctx.beginPath(); ctx.arc(55, 58, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(73, 58, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#8a5c05';
+      ctx.beginPath(); ctx.arc(64, 68, 12, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke();
+    });
+    var edge = new THREE.MeshLambertMaterial({ color: 0xd8a520, emissive: 0x3a2600 });
+    var flat = new THREE.MeshLambertMaterial({ map: face, emissive: 0x4a3400, emissiveMap: face });
+    var coin = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.16, 26),
+      [edge, flat, flat]);
+    coin.rotation.x = Math.PI / 2;
+    g.add(coin);
+
+    var glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: World.glowTexture(255, 226, 130), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.85
+    }));
+    glow.scale.set(5, 5, 1);
+    g.add(glow);
+    g.userData.coin = coin;
+    g.userData.glow = glow;
+    return g;
+  };
+
+  /* Руки солнца: два золотых луча с ладонями, которые подхватывают печку. */
+  World.buildSunHands = function () {
+    var g = new THREE.Group();
+    var mat = new THREE.MeshLambertMaterial({
+      color: 0xffd25a, emissive: 0xb87c10, transparent: true, opacity: 0.92
+    });
+    g.userData.mat = mat;
+
+    for (var s = -1; s <= 1; s += 2) {
+      var arm = new THREE.Group();
+      arm.position.set(s * 2.6, 1.2, 0);
+      var parts = [];
+      // луч-рука уходит вверх к солнцу, чуть в сторону
+      var L = 90;
+      var beam = new THREE.CylinderGeometry(0.16, 0.85, L, 10, 1, true);
+      var mb = new THREE.Matrix4().makeRotationZ(s * -0.16);
+      mb.setPosition(s * 0.5 + s * L * 0.08, L / 2, 0);
+      beam.applyMatrix4(mb);
+      parts.push(beam);
+      // ладонь
+      var palm = new THREE.SphereGeometry(1.15, 12, 9);
+      var mp = new THREE.Matrix4().makeScale(1, 0.55, 1.25);
+      mp.setPosition(0, 0, 0);
+      palm.applyMatrix4(mp);
+      parts.push(palm);
+      // пальцы охватывают печку
+      for (var f = 0; f < 4; f++) {
+        var fin = new THREE.CylinderGeometry(0.17, 0.2, 1.5, 7);
+        var mf = new THREE.Matrix4().makeRotationX(0.5 - f * 0.12);
+        mf.premultiply(new THREE.Matrix4().makeRotationZ(s * 0.9));
+        mf.setPosition(s * -0.75, 0.35, (f - 1.5) * 0.62);
+        fin.applyMatrix4(mf);
+        parts.push(fin);
+      }
+      var thumb = new THREE.CylinderGeometry(0.19, 0.22, 1.3, 7);
+      var mt = new THREE.Matrix4().makeRotationX(Math.PI / 2.4);
+      mt.premultiply(new THREE.Matrix4().makeRotationZ(s * 0.4));
+      mt.setPosition(s * -0.3, 0.3, 1.0);
+      thumb.applyMatrix4(mt);
+      parts.push(thumb);
+
+      arm.add(new THREE.Mesh(World.mergeGeometries(parts), mat));
+      g.add(arm);
+    }
+
+    var halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: World.glowTexture(255, 232, 150), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.6
+    }));
+    halo.scale.set(16, 16, 1);
+    halo.position.y = 1.6;
+    g.add(halo);
+    g.userData.halo = halo;
+    g.visible = false;
+    return g;
+  };
+
+  /* ---------- Птички ---------- */
+
+  var BIRD_COLORS = [
+    { body: 0x4d9be6, wing: 0x2f6fb0, belly: 0xf2f6fb },   // синичка-лазоревка
+    { body: 0xf0c23c, wing: 0xc99a1c, belly: 0xfff3cd },   // жёлтая
+    { body: 0xf4f4f2, wing: 0xd8d8d4, belly: 0xffffff },   // голубь
+    { body: 0xe0705a, wing: 0xb5432f, belly: 0xffe6d8 },   // снегирь
+    { body: 0x67c07a, wing: 0x3d8a52, belly: 0xeaf7ea }    // попугайчик
+  ];
+
+  /* Маленькая птичка с машущими крыльями. */
+  World.buildBird = function () {
+    var c = BIRD_COLORS[Math.floor(Math.random() * BIRD_COLORS.length)];
+    var g = new THREE.Group();
+    var bodyMat = new THREE.MeshLambertMaterial({ color: c.body });
+    var wingMat = new THREE.MeshLambertMaterial({ color: c.wing, side: THREE.DoubleSide });
+
+    var parts = [];
+    var body = new THREE.SphereGeometry(0.26, 12, 9);
+    var mb = new THREE.Matrix4().makeScale(0.8, 0.8, 1.5);
+    mb.setPosition(0, 0, 0);
+    body.applyMatrix4(mb);
+    parts.push(body);
+    var head = new THREE.SphereGeometry(0.17, 10, 8);
+    head.translate(0, 0.1, 0.32);
+    parts.push(head);
+    var tail = new THREE.BoxGeometry(0.24, 0.04, 0.34);
+    var mt = new THREE.Matrix4().makeRotationX(-0.25);
+    mt.setPosition(0, 0.05, -0.44);
+    tail.applyMatrix4(mt);
+    parts.push(tail);
+    g.add(new THREE.Mesh(World.mergeGeometries(parts), bodyMat));
+
+    var beak = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.16, 6),
+      new THREE.MeshLambertMaterial({ color: 0xe8a53c }));
+    beak.rotation.x = Math.PI / 2;
+    beak.position.set(0, 0.09, 0.48);
+    g.add(beak);
+
+    var eyes = [];
+    for (var e = -1; e <= 1; e += 2) {
+      var eye = new THREE.SphereGeometry(0.035, 6, 5);
+      eye.translate(e * 0.1, 0.14, 0.42);
+      eyes.push(eye);
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(eyes),
+      new THREE.MeshLambertMaterial({ color: 0x14161a })));
+
+    // крылья: плоские «перья», качаются вокруг оси Z
+    var wings = [];
+    for (var s = -1; s <= 1; s += 2) {
+      var pivot = new THREE.Group();
+      pivot.position.set(s * 0.16, 0.06, 0.02);
+      var shape = new THREE.PlaneGeometry(0.72, 0.34, 3, 1);
+      var pos = shape.attributes.position;
+      for (var i = 0; i < pos.count; i++) {           // изгиб пера
+        var x = pos.getX(i);
+        pos.setZ(i, -Math.abs(x) * 0.28);
+      }
+      shape.computeVertexNormals();
+      var m = new THREE.Matrix4().makeRotationY(s > 0 ? 0 : Math.PI);
+      m.setPosition(s * 0.36, 0, 0);
+      shape.applyMatrix4(m);
+      var wing = new THREE.Mesh(shape, wingMat);
+      pivot.add(wing);
+      g.add(pivot);
+      wings.push(pivot);
+    }
+
+    g.userData.wings = wings;
+    g.scale.setScalar(0.8 + Math.random() * 0.6);
+    return g;
   };
 
   global.World = World;

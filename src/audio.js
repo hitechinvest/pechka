@@ -507,6 +507,139 @@
     setTimeout(function () { s.trainWhistle(0.8); }, 620);
   };
 
+  /* Птичья трель: несколько быстрых свистков с вибрато. */
+  Sfx.prototype.birdTrill = function (vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    var t = this.ctx.currentTime;
+    var base = 1700 + Math.random() * 900;
+    var notes = 3 + Math.floor(Math.random() * 4);
+    for (var i = 0; i < notes; i++) {
+      var at = t + i * (0.07 + Math.random() * 0.05);
+      var o = this.ctx.createOscillator();
+      o.type = 'sine';
+      var f = base * (1 + (Math.random() - 0.35) * 0.35);
+      o.frequency.setValueAtTime(f, at);
+      o.frequency.exponentialRampToValueAtTime(f * (1.1 + Math.random() * 0.5), at + 0.06);
+      // вибрато делает свист живым
+      var lfo = this.ctx.createOscillator();
+      lfo.frequency.value = 22 + Math.random() * 16;
+      var lg = this.ctx.createGain();
+      lg.gain.value = 55;
+      lfo.connect(lg).connect(o.frequency);
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.linearRampToValueAtTime(0.09 * vol, at + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.09);
+      o.connect(g).connect(this.master);
+      lfo.start(at); o.start(at);
+      o.stop(at + 0.12); lfo.stop(at + 0.12);
+    }
+  };
+
+  /* Монетка: звонкий аккорд вверх. */
+  Sfx.prototype.coinChime = function () {
+    this.init();
+    if (!this.ctx) return;
+    var t = this.ctx.currentTime;
+    var notes = [880, 1318, 1760, 2637];
+    for (var i = 0; i < notes.length; i++) {
+      var at = t + i * 0.055;
+      var o = this.ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = notes[i];
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.linearRampToValueAtTime(0.16, at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.5);
+      o.connect(g).connect(this.master);
+      o.start(at);
+      o.stop(at + 0.55);
+    }
+  };
+
+  /* Солнце подхватывает: тёплый нарастающий гул с шелестом. */
+  Sfx.prototype.sunLift = function () {
+    this.init();
+    if (!this.ctx) return;
+    var t = this.ctx.currentTime;
+    for (var i = 0; i < 3; i++) {
+      var o = this.ctx.createOscillator();
+      o.type = i ? 'sine' : 'sawtooth';
+      o.frequency.setValueAtTime(160 * (i + 1), t);
+      o.frequency.exponentialRampToValueAtTime(520 * (i + 1), t + 1.4);
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.1 / (i + 1), t + 0.25);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 1.9);
+    }
+    this.noise(1.6, 0.1, 2600);
+  };
+
+  /* Радар выписывает штраф: щелчок затвора и два строгих гудка. */
+  Sfx.prototype.radarSnap = function () {
+    this.init();
+    if (!this.ctx) return;
+    this.noise(0.08, 0.3, 5200);
+    var s = this;
+    setTimeout(function () { s.beep(1180, 0.12, 0.14); }, 90);
+    setTimeout(function () { s.beep(880, 0.2, 0.14); }, 240);
+  };
+
+  /* Верблюд харкается: шипение и шлепок. */
+  Sfx.prototype.camelSpit = function (vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    var t = this.ctx.currentTime;
+    this.noise(0.45, 0.22 * vol, 2200);
+    var o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(220, t);
+    o.frequency.exponentialRampToValueAtTime(70, t + 0.4);
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.14 * vol, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.5);
+    var s = this;
+    setTimeout(function () { s.splat(vol); }, 420);
+  };
+
+  /* Рёв верблюда — когда он бросается в погоню. */
+  Sfx.prototype.camelRoar = function (vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    var t = this.ctx.currentTime;
+    var o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.linearRampToValueAtTime(95, t + 0.5);
+    o.frequency.linearRampToValueAtTime(130, t + 0.9);
+    var f = this.ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 900;
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.2 * vol, t + 0.12);
+    g.gain.setValueAtTime(0.2 * vol, t + 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+    o.connect(f).connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 1.2);
+  };
+
+  /* Шаги пешком: два глухих шлепка. */
+  Sfx.prototype.footstep = function (vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    this.noise(0.09, 0.09 * vol, 900);
+  };
+
   /* Гул печки-паровоза для машины в фокусе камеры. */
   Sfx.prototype.startEngine = function () {
     this.init();
