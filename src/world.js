@@ -5675,5 +5675,65 @@
     return g;
   };
 
+  /* ---------- Крылья для печки (админский полёт) ---------- */
+
+  World.buildWings = function () {
+    var g = new THREE.Group();
+    var featherTex = canvasTexture(128, 128, function (ctx, w, h) {
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#efe7d6';
+      ctx.fillRect(0, 0, w, h);
+      // перья: ряды вытянутых капель
+      for (var row = 0; row < 5; row++) {
+        for (var i = 0; i < 7; i++) {
+          var x = 6 + i * 18 + (row % 2 ? 9 : 0);
+          var y = 8 + row * 26;
+          ctx.fillStyle = row % 2 ? 'rgba(206,196,176,0.85)' : 'rgba(226,218,200,0.9)';
+          ctx.beginPath();
+          ctx.ellipse(x, y, 8, 15, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(150,140,120,0.5)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, y - 14); ctx.lineTo(x, y + 14);
+          ctx.stroke();
+        }
+      }
+    });
+    var featherMat = new THREE.MeshLambertMaterial({
+      map: featherTex, side: THREE.DoubleSide, transparent: true, alphaTest: 0.3
+    });
+    var boneMat = new THREE.MeshLambertMaterial({ color: 0xc9b48f });
+
+    var pivots = [];
+    for (var s = -1; s <= 1; s += 2) {
+      var pivot = new THREE.Group();
+      pivot.position.set(s * 1.35, 3.1, -0.2);
+      // маховая часть: три пера-плоскости веером
+      for (var f = 0; f < 3; f++) {
+        var plane = new THREE.PlaneGeometry(3.2, 1.5 - f * 0.28);
+        // крыло лежит почти горизонтально, как у птицы в развороте
+        var m = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+        m.premultiply(new THREE.Matrix4().makeRotationZ(-s * 0.12));
+        m.setPosition(s * (1.7 + f * 0.2), 0.1 - f * 0.12, -0.2 - f * 0.62);
+        plane.applyMatrix4(m);
+        var wing = new THREE.Mesh(plane, featherMat);
+        pivot.add(wing);
+      }
+      // косточка вдоль крыла
+      var bone = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.11, 3.3, 7), boneMat);
+      bone.rotation.z = Math.PI / 2;
+      bone.position.set(s * 1.7, 0.16, 0.35);
+      pivot.add(bone);
+      g.add(pivot);
+      pivots.push(pivot);
+    }
+
+    g.userData.pivots = pivots;
+    g.visible = false;
+    return g;
+  };
+
+
   global.World = World;
 })(window);

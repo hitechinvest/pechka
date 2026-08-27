@@ -69,6 +69,49 @@
     border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.05);
   }
   .kh b { color: var(--gold); }
+  /* магазин */
+  #shop {
+    position: fixed; inset: 0; display: none; z-index: 40; padding: 16px; overflow: auto;
+    background: radial-gradient(120% 100% at 50% 0%, rgba(12,22,40,0.6), rgba(6,10,18,0.92));
+  }
+  #shop.show { display: flex; align-items: center; justify-content: center; }
+  #shop .card { margin: auto; }
+  .shop-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .shop-head h2 { margin: 0; font-size: 22px; }
+  .wallet {
+    font-size: 18px; font-weight: 800; color: var(--gold);
+    background: rgba(255,210,63,0.12); border: 1px solid rgba(255,210,63,0.4);
+    border-radius: 12px; padding: 6px 12px;
+  }
+  .shop-note { font-size: 13px; color: #a9bad2; line-height: 1.5; margin: 10px 0 14px; }
+  .upg {
+    display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 8px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px;
+  }
+  .upg.done { opacity: 0.72; border-color: rgba(140,233,154,0.4); }
+  .upg .ico { font-size: 26px; width: 34px; text-align: center; }
+  .upg .txt { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .upg .txt b { font-size: 15px; }
+  .upg .txt span { font-size: 12.5px; color: #a9bad2; }
+  .upg .dots { display: flex; gap: 4px; margin-top: 4px; }
+  .upg .dots i {
+    width: 22px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.18);
+  }
+  .upg .dots i.on { background: var(--gold); }
+  .upg .buy {
+    min-width: 74px; padding: 9px 12px; border-radius: 11px; font-weight: 800; font-size: 14px;
+    cursor: pointer; border: none; color: #22160a; background: linear-gradient(180deg, #ffe07a, #f5b31f);
+  }
+  .upg .buy.off { background: rgba(255,255,255,0.12); color: #8ea0b8; cursor: not-allowed; }
+  .upg .buy.max { background: none; color: #8ce99a; font-size: 13px; text-align: center; }
+  #shop-close { margin-top: 14px; }
+  .menu-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #shop-open {
+    padding: 9px 14px; border-radius: 12px; font-weight: 800; font-size: 14px; cursor: pointer;
+    color: #22160a; background: linear-gradient(180deg, #ffe07a, #f5b31f); border: none;
+  }
+  .prize { color: var(--gold); font-weight: 700; }
+
   .rules { margin: 14px 0 0; padding: 12px 16px 14px; border-radius: 14px;
     background: rgba(255,210,63,0.08); border: 1px solid rgba(255,210,63,0.28); font-size: 13.5px; line-height: 1.6; }
   .rules summary { cursor: pointer; font-weight: 800; color: var(--gold); list-style: none; }
@@ -330,6 +373,7 @@
     <label><input type="checkbox" id="adm-slowai"> Ослабить компьютер</label>
     <label><input type="checkbox" id="adm-nogranny"> Убрать бабушек</label>
     <label><input type="checkbox" id="adm-nohazard"> Без бурь, зверей и полиции</label>
+    <label><input type="checkbox" id="adm-wings"> 🪶 Крылья: печка летает (держи Z)</label>
 
     <div class="alabel">Светофоры</div>
     <div class="aseg" id="adm-lights">
@@ -386,7 +430,10 @@
 
 <div id="menu" class="show">
   <div class="card">
-    <h1>Гонки на <span>печках</span></h1>
+    <div class="menu-top">
+      <h1>Гонки на <span>печках</span></h1>
+      <button id="shop-open">🪙 <span id="wallet-menu">0</span> · Магазин</button>
+    </div>
     <p class="sub">Русская печка на колёсах: пять городов, шесть перекрёстков со светофорами,
       бабушки на переходах, радары, верблюды и солнечная монетка. Газ, руль и супер-пар — под музыку.</p>
 
@@ -462,6 +509,13 @@
     </details>
 
     <button id="start">Поехали!</button>
+  </div>
+</div>
+
+<div id="shop">
+  <div class="card">
+    <div id="shop-body"></div>
+    <button id="shop-close">Закрыть</button>
   </div>
 </div>
 

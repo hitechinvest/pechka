@@ -110,6 +110,7 @@
     invincible: false,
     infiniteSteam: false,
     weakAI: false,
+    wings: false,
     noGrannies: false,
     noHazards: false,
     lights: 'auto'
@@ -738,6 +739,15 @@
       flash(r.name + ': ' + (camel.info || World.BEASTS.camel).hit + ' — прощено (админ)', '#5dd6ff');
       return;
     }
+    // чугунный бампер второго уровня один раз держит удар
+    if (r.isHuman && lvl('bumper') >= 2 && !r.bumperUsed) {
+      r.bumperUsed = true;
+      r.speed *= 0.35;
+      r.skid = (Math.random() < 0.5 ? -1 : 1) * 2.4;
+      sfx.crash();
+      flash(r.name + ': чугунный бампер выдержал удар!', '#8ce99a');
+      return;
+    }
     for (var i = 0; i < 22; i++) {
       var p = r.mesh.position.clone();
       p.y += 1 + Math.random() * 2.5;
@@ -1009,7 +1019,10 @@
   /* Руки солнца держат ту печку, которая сейчас летит. */
   function updateSunHands(dt) {
     var flyer = null;
-    for (var i = 0; i < racers.length; i++) if (racers[i].soarY > 0.2) flyer = racers[i];
+    // руки солнца — только для полёта с монетки, у крыльев свой полёт
+    for (var i = 0; i < racers.length; i++) {
+      if (racers[i].soarY > 0.2 && !racers[i].wings) flyer = racers[i];
+    }
     if (!flyer) { sunHands.visible = false; return; }
     sunHands.visible = true;
     var k = Math.min(1, flyer.soarY / SOAR_HEIGHT);
@@ -1417,8 +1430,8 @@
         c.speed = Math.max(1.5, c.speed * 0.5);
         c.parked = false;
         World.dentCar(c.mesh, 1);
-        r.speed *= 0.78;
-        r.skid = -side * 1.4;
+        r.speed *= 1 - 0.22 * upgDamp(r);
+        r.skid = -side * 1.4 * upgDamp(r);
         var d = camera.position.distanceTo(c.mesh.position);
         sfx.crash();
         sfx.bump(Math.max(0, 1 - d / 120));
@@ -2174,6 +2187,7 @@
         air: 0,            // насколько печка сейчас оторвалась от дороги
         onFoot: false,     // хозяин слез с печки и гуляет
         foot: null,
+        bumperUsed: false, // чугунный бампер уже спас один раз
         vehicle: 'stove',  // на чём едет: печка, машина или полицейская
         car: null,
         stoveMesh: null,
@@ -2502,15 +2516,16 @@
 
       // супер-пар: пока держат кнопку и есть пар в котле
       var wasBoosting = r.boosting;
+      if (r.wings) wantBoost = false;          // с крыльями Z — это «вверх», а не турбо
       r.boosting = wantBoost && r.throttle && r.steam > (r.boosting ? 0.5 : STEAM_MIN);
       if (r.boosting) {
-        r.steam = Math.max(0, r.steam - STEAM_DRAIN * dt);
+        r.steam = Math.max(0, r.steam - STEAM_DRAIN / upgSteam(r) * dt);
         if (!wasBoosting) {
           var dcam = camera.position.distanceTo(r.mesh.position);
           sfx.steamBurst(Math.max(0, 1 - dcam / 140));
         }
       } else {
-        r.steam = Math.min(100, r.steam + STEAM_REFILL * dt);
+        r.steam = Math.min(100, r.steam + STEAM_REFILL * upgSteam(r) * dt);
       }
       if (admin.infiniteSteam && r.canBoost) r.steam = 100;
 
@@ -2519,10 +2534,11 @@
       // машина быстрее печки и лучше держит дорогу, полицейская — ещё быстрее
       var vehK = r.vehicle === 'police' ? 1.3 : (r.vehicle === 'car' ? 1.18 : 1);
       var skill = r.isHuman ? 1 : r.ai.skill * (admin.weakAI ? 0.75 : 1);
-      var maxV = (r.boosting ? BOOST_SPEED : MAX_SPEED) * skill * vehK * (onEdge ? EDGE_PENALTY : 1);
-      var accel = r.boosting ? BOOST_ACCEL : ACCEL;
+      var maxV = (r.boosting ? BOOST_SPEED : MAX_SPEED) * skill * vehK *
+        upgTop(r) * (onEdge ? EDGE_PENALTY : 1);
+      var accel = (r.boosting ? BOOST_ACCEL : ACCEL) * upgAccel(r);
       if (r.throttle) r.speed = Math.min(maxV, r.speed + accel * dt);
-      else r.speed = Math.max(0, r.speed - BRAKE * dt);
+      else r.speed = Math.max(0, r.speed - BRAKE * upgBrake(r) * dt);
       if (r.speed > maxV) r.speed = Math.max(maxV, r.speed - BRAKE * 0.8 * dt);
 
       // горки: в подъём тянет назад и режет потолок скорости,
@@ -2547,7 +2563,7 @@
       var wet = (storm.kind === 'rain' || storm.kind === 'snow') ? storm.level : 0;
       var grip = soaring ? 1.2
         : (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1) * (1 - wet * 0.25);
-      r.lane -= r.steer * STEER_RATE * dt * Math.min(1, r.speed / 9) * grip;
+      r.lane -= r.steer * STEER_RATE * upgSteer(r) * dt * Math.min(1, r.speed / 9) * grip;
 
       if (r.skid !== 0) {
         r.lane += r.skid * dt;
@@ -2571,6 +2587,7 @@
     }
 
     updateSoar(r, dt);
+    updateWings(r, dt);
 
     r.prevDist = r.dist;
     r.dist += r.speed * dt;
@@ -2950,8 +2967,9 @@
     // полёт на солнечных руках
     ui.soar.style.opacity = f.soarY > 1 ? '1' : '0';
     if (f.soarY > 1) {
-      ui.soar.textContent = '☀️ ПОЛЁТ · ' + Math.ceil(f.soarLeft) + ' с · ' +
-        Math.round(f.soarY) + ' м';
+      ui.soar.textContent = f.wings && f.soarLeft <= 0
+        ? ('🪶 КРЫЛЬЯ · ' + Math.round(f.soarY) + ' м · Z — выше')
+        : ('☀️ ПОЛЁТ · ' + Math.ceil(f.soarLeft) + ' с · ' + Math.round(f.soarY) + ' м');
     }
 
     // тюрьма и песчаная буря
@@ -3023,8 +3041,194 @@
       html += '<p class="dqlist">Сняты с гонки: ' +
         dqd.map(function (r) { return r.name + ' (' + r.dqReason + ')'; }).join(', ') + '</p>';
     }
+    var prizes = awardCoins();
+    if (prizes.length) {
+      html += '<p class="prize">🪙 ' + prizes.join(' · ') +
+        ' · всего в кошельке ' + shop.coins + '</p>';
+    } else {
+      html += '<p class="dqlist">Монет за этот заезд нет — нужен призовой финиш.</p>';
+    }
+    if (ui.walletMenu) ui.walletMenu.textContent = shop.coins;
     ui.resultBody.innerHTML = html;
     ui.results.classList.add('show');
+  }
+
+  /* ---------------- Крылья: печка летает (админ) ---------------- */
+
+  var WINGS_MAX = 45;          // выше не поднимаемся
+  var WINGS_UP = 11;           // скорость набора высоты, м/с
+  var WINGS_DOWN = 5;          // планирование вниз
+
+  function applyWings() {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (!r.isHuman) continue;
+      if (admin.wings) {
+        if (!r.wingsMesh) {
+          r.wingsMesh = World.buildWings();
+          (r.stoveMesh || r.mesh).add(r.wingsMesh);
+        }
+        r.wingsMesh.visible = true;
+        r.wings = true;
+      } else if (r.wingsMesh) {
+        r.wingsMesh.visible = false;
+        r.wings = false;
+      }
+    }
+    if (admin.wings) flash('🪶 Крылья выданы: держи Z — печка взлетает', '#ffd23f');
+  }
+
+  /* Полёт на крыльях: держишь турбо — набираешь высоту, отпустил — планируешь. */
+  function updateWings(r, dt) {
+    if (!r.wings || r.jail > 0 || r.onFoot || r.dq) return;
+    var up = pressed(r.keys.boost) || !!touchBoost[r.id];
+    if (up && r.speed > 4) {
+      r.soarY = Math.min(WINGS_MAX, r.soarY + WINGS_UP * dt);
+      r.flying = false;
+      r.air = 0;
+    } else if (r.soarY > 0) {
+      r.soarY = Math.max(0, r.soarY - WINGS_DOWN * dt);
+    }
+    // взмахи: чаще, когда набираешь высоту
+    r.wingBeat = (r.wingBeat || 0) + dt * (up ? 7 : 3.2);
+    var pv = r.wingsMesh.userData.pivots;
+    var a = Math.sin(r.wingBeat) * (up ? 0.6 : 0.28);
+    pv[0].rotation.z = -a;
+    pv[1].rotation.z = a;
+  }
+
+  /* ---------------- Монеты и магазин улучшений ---------------- */
+
+  /* За место в гонке дают монеты, на них в магазине покупаются улучшения печки.
+     Кошелёк и купленные уровни лежат в localStorage, поэтому не пропадают. */
+  var PRIZES = [5, 3, 1];               // 1-е, 2-е и 3-е место
+
+  var UPGRADES = [
+    { id: 'fuel', name: 'Берёзовые дрова', icon: '🪵',
+      hint: 'печь разгоняется резвее', levels: [4, 9, 16] },
+    { id: 'wheels', name: 'Кованые ободья', icon: '🛞',
+      hint: 'выше максимальная скорость', levels: [5, 11, 18] },
+    { id: 'steer', name: 'Тележный руль', icon: '🎯',
+      hint: 'печка круче поворачивает и меньше плывёт', levels: [3, 8, 14] },
+    { id: 'boiler', name: 'Большой котёл', icon: '💨',
+      hint: 'пара больше, набирается быстрее', levels: [4, 9, 15] },
+    { id: 'brakes', name: 'Колодки', icon: '🛑',
+      hint: 'тормозит резче — удобно перед радаром', levels: [3, 7] },
+    { id: 'bumper', name: 'Чугунный бампер', icon: '🛡',
+      hint: 'мягче удары, а на втором уровне спасает от зверя один раз', levels: [6, 13] }
+  ];
+
+  var shop = { coins: 0, upg: {}, lastPrize: 0 };
+
+  function shopLoad() {
+    for (var i = 0; i < UPGRADES.length; i++) shop.upg[UPGRADES[i].id] = 0;
+    try {
+      var raw = localStorage.getItem('pechki.shop');
+      if (!raw) return;
+      var data = JSON.parse(raw);
+      shop.coins = Math.max(0, data.coins | 0);
+      for (var k = 0; k < UPGRADES.length; k++) {
+        var u = UPGRADES[k];
+        var lv = data.upg && data.upg[u.id] | 0;
+        shop.upg[u.id] = Math.max(0, Math.min(u.levels.length, lv));
+      }
+    } catch (e) { /* приватный режим — играем без сохранения */ }
+  }
+
+  function shopSave() {
+    try {
+      localStorage.setItem('pechki.shop', JSON.stringify({ coins: shop.coins, upg: shop.upg }));
+    } catch (e) { /* ничего страшного */ }
+  }
+
+  function lvl(id) { return shop.upg[id] || 0; }
+
+  /* Множители, которые дают купленные улучшения. Они работают только
+     у живых игроков — компьютер едет на стандартной печке. */
+  function upgAccel(r) { return r.isHuman ? 1 + lvl('fuel') * 0.09 : 1; }
+  function upgTop(r) { return r.isHuman ? 1 + lvl('wheels') * 0.05 : 1; }
+  function upgSteer(r) { return r.isHuman ? 1 + lvl('steer') * 0.1 : 1; }
+  function upgBrake(r) { return r.isHuman ? 1 + lvl('brakes') * 0.16 : 1; }
+  function upgSteam(r) { return r.isHuman ? 1 + lvl('boiler') * 0.35 : 1; }
+  function upgDamp(r) { return r.isHuman ? 1 - lvl('bumper') * 0.18 : 1; }
+
+  /* Начисление за места после финиша. */
+  function awardCoins() {
+    var order = ranking();
+    var got = 0, lines = [];
+    for (var i = 0; i < order.length && i < PRIZES.length; i++) {
+      var r = order[i];
+      if (!r.isHuman || r.dq) continue;
+      got += PRIZES[i];
+      lines.push(r.name + ' — ' + (i + 1) + ' место, +' + PRIZES[i]);
+    }
+    shop.lastPrize = got;
+    if (got) {
+      shop.coins += got;
+      shopSave();
+    }
+    return lines;
+  }
+
+  /* ---------------- Экран магазина ---------------- */
+
+  function renderShop() {
+    var html = '<div class="shop-head"><h2>Магазин печки</h2>' +
+      '<div class="wallet">🪙 <b>' + shop.coins + '</b></div></div>' +
+      '<p class="shop-note">Монеты дают за призовые места: <b>1-е — 5</b>, ' +
+      '<b>2-е — 3</b>, <b>3-е — 1</b>. Улучшения работают у живых игроков ' +
+      'и сохраняются между заездами.</p>';
+    for (var i = 0; i < UPGRADES.length; i++) {
+      var u = UPGRADES[i];
+      var lv = lvl(u.id);
+      var max = u.levels.length;
+      var price = lv < max ? u.levels[lv] : 0;
+      var dots = '';
+      for (var d = 0; d < max; d++) dots += '<i class="' + (d < lv ? 'on' : '') + '"></i>';
+      var can = lv < max && shop.coins >= price;
+      html += '<div class="upg' + (lv >= max ? ' done' : '') + '">' +
+        '<div class="ico">' + u.icon + '</div>' +
+        '<div class="txt"><b>' + u.name + '</b><span>' + u.hint + '</span>' +
+        '<div class="dots">' + dots + '</div></div>' +
+        (lv >= max
+          ? '<div class="buy max">максимум</div>'
+          : '<button class="buy' + (can ? '' : ' off') + '" data-buy="' + u.id + '">🪙 ' + price + '</button>') +
+        '</div>';
+    }
+    ui.shopBody.innerHTML = html;
+    var btns = ui.shopBody.querySelectorAll('button[data-buy]');
+    for (var b = 0; b < btns.length; b++) {
+      btns[b].addEventListener('click', function () { buyUpgrade(this.dataset.buy); });
+    }
+    if (ui.walletMenu) ui.walletMenu.textContent = shop.coins;
+  }
+
+  function buyUpgrade(id) {
+    var u = null;
+    for (var i = 0; i < UPGRADES.length; i++) if (UPGRADES[i].id === id) u = UPGRADES[i];
+    if (!u) return;
+    var lv = lvl(id);
+    if (lv >= u.levels.length) return;
+    var price = u.levels[lv];
+    if (shop.coins < price) {
+      sfx.buzzer();
+      flash('Не хватает монет — займи призовое место', '#ff8a3d');
+      return;
+    }
+    shop.coins -= price;
+    shop.upg[id] = lv + 1;
+    shopSave();
+    sfx.coinChime();
+    renderShop();
+  }
+
+  function openShop() {
+    renderShop();
+    ui.shop.classList.add('show');
+  }
+
+  function closeShop() {
+    ui.shop.classList.remove('show');
   }
 
   /* ---------------- Цикл ---------------- */
@@ -3241,6 +3445,7 @@
     resetJail();
     resetCoin();
     buildPedals(humanCount);
+    if (admin.wings) applyWings();
     touchThrottle = {};
     touchSteer = {};
     touchBoost = {};
@@ -3326,12 +3531,14 @@
       ['adm-invincible', 'invincible'],
       ['adm-steam', 'infiniteSteam'],
       ['adm-slowai', 'weakAI'],
+      ['adm-wings', 'wings'],
       ['adm-nogranny', 'noGrannies'],
       ['adm-nohazard', 'noHazards']
     ];
     checks.forEach(function (pair) {
       document.getElementById(pair[0]).addEventListener('change', function (e) {
         admin[pair[1]] = e.target.checked;
+        if (pair[1] === 'wings') applyWings();
       });
     });
 
@@ -3487,8 +3694,12 @@
     ui.limitBox = document.getElementById('limit-box');
     ui.limitNum = document.getElementById('limit-num');
     ui.limitText = document.getElementById('limit-text');
+    ui.shop = document.getElementById('shop');
+    ui.shopBody = document.getElementById('shop-body');
+    ui.walletMenu = document.getElementById('wallet-menu');
     ui.pedals = [];
 
+    shopLoad();
     initRenderer();
     buildWorld();
     bindInput();
@@ -3552,6 +3763,9 @@
       startRace(chosen, lapsChosen);
     });
     document.getElementById('to-menu').addEventListener('click', backToMenu);
+    document.getElementById('shop-open').addEventListener('click', openShop);
+    document.getElementById('shop-close').addEventListener('click', closeShop);
+    if (ui.walletMenu) ui.walletMenu.textContent = shop.coins;
     ui.mute.addEventListener('click', toggleSound);
     ui.musicBtn.addEventListener('click', toggleMusic);
     document.getElementById('cam').addEventListener('click', function () {
@@ -3620,6 +3834,7 @@
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
       storm: { active: storm.active, kind: storm.kind, level: +storm.level.toFixed(2) },
       map: mapId, difficulty: difficulty.id, beast: camel ? camel.kind : null,
+      shop: { coins: shop.coins, upg: shop.upg, lastPrize: shop.lastPrize },
       jail: jail && jail.inmate ? { who: jail.inmate.name, hasKey: jail.hasKey,
         open: jail.open, escaped: jail.escaped, keyDist: Math.round(jail.keyDist),
         keyLane: +jail.keyLane.toFixed(1), guardDist: Math.round(jail.guardDist) } : null,
@@ -3651,7 +3866,7 @@
           reason: r.dqReason || null, rider: r.rider,
           jail: +r.jail.toFixed(1), jailReason: r.jailReason || null, skid: +r.skid.toFixed(2),
           soar: +(r.soarY || 0).toFixed(1), soarLeft: +(r.soarLeft || 0).toFixed(1),
-          onFoot: !!r.onFoot, vehicle: r.vehicle,
+          onFoot: !!r.onFoot, vehicle: r.vehicle, wings: !!r.wings,
           foot: r.foot && r.onFoot ? { dist: Math.round(r.foot.dist), lane: +r.foot.lane.toFixed(1),
             stun: +r.foot.stun.toFixed(1) } : null,
           throttle: r.throttle,
