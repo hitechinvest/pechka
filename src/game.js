@@ -73,6 +73,9 @@
   var roach = null;
   var puddles = [];
   var pedestrians = [];
+  var cars = [];
+  var chase = { target: null, timer: 0, count: 0, forced: false };
+  var jail = null;
   var signs = [];
   var birds = [];
   var birdTimer = 12;
@@ -196,6 +199,8 @@
     createGrannies();
     createHazards();
     createRoadSigns();
+    createCars();
+    createJail();
     createPedestrians();
     createBirds();
     createCoin();
@@ -321,8 +326,12 @@
   function resetHazards() {
     for (var i = 0; i < police.length; i++) {
       police[i].active = false;
+      police[i].stolen = false;
+      police[i].owner = null;
+      police[i].phase = 'parked';
       police[i].mesh.visible = false;
     }
+    chase.target = null;
     camel.active = false; camel.mesh.visible = false; camel.timer = 30 + Math.random() * 30;
     camel.chase = null; camel.spit = 0;
     for (var w = 0; w < racers.length; w++) {
@@ -382,6 +391,7 @@
     for (var i = 0; i < police.length; i++) {
       var c = police[i];
       if (!c.active) continue;
+      if (c.phase === 'chase' || c.stolen) continue;    // этим управляет погоня
       c.blink += dt;
       c.timer -= dt;
       World.flashPolice(c.mesh, c.blink);
@@ -715,9 +725,10 @@
     }
     r.status.visible = true;
     sfx.siren(0.9, 2);
-    sfx.jailClang();
     music.duck(1.4);
     flash(r.name + ' ' + reason + ' — тюрьма на ' + Math.round(seconds) + ' с!', '#ff8a3d');
+    // живого игрока увозят в настоящую тюрьму: оттуда можно сбежать
+    if (!sendToJail(r, seconds)) sfx.jailClang();
   }
 
   /* Врезался в верблюда: печь разлетается кирпичами и выбывает. */
@@ -825,6 +836,7 @@
       var bp = track.pointAt(bd);
       var bn = track.sideAt(bd);
       var bside = b % 2 ? -1 : 1;
+      if (World.inJailZone(track, bd, bside * (World.roadFootprint(track, bd) + 4))) bside = -bside;
       var bill = World.billboard(World.BILLBOARDS[b].lines, World.BILLBOARDS[b].accent);
       bill.position.copy(bp).addScaledVector(bn, bside * (World.roadFootprint(track, bd) + 4));
       bill.position.y = 0;
@@ -1090,43 +1102,38 @@
   var WALK_SPEED = 2.4;         // шагом, м/с
   var RUN_SPEED = 4.6;          // бегом (турбо-клавиша)
 
-  /* Сойти с печки или запрыгнуть обратно. Клавиша G у живых игроков. */
+  /* Сойти с печки или запрыгнуть обратно. Клавиша G у живых игроков.
+     Пешком можно сесть не только в свою печку, но и в чужую машину. */
   function toggleFoot(r) {
     if (!r || !r.isHuman || r.dq || r.finished || r.jail > 0) return;
     if (r.soarY > 0.5) { flash('Сначала приземлись!', '#ffd23f'); return; }
 
     if (r.onFoot) {
-      var w = r.foot;
-      var gap = Math.abs(track.norm(w.dist - r.dist + track.length / 2) - track.length / 2);
-      if (gap > 6 || Math.abs(w.lane - r.lane) > 5) {
-        flash('До печки далеко — подойди ближе', '#ffd23f');
+      var ride = nearestRide(r.foot, r);
+      if (!ride) {
+        flash('Рядом нет ни печки, ни машины — подойди ближе', '#ffd23f');
         return;
       }
-      r.onFoot = false;
-      w.mesh.visible = false;
-      r.mesh.userData.fire.visible = true;
-      r.mesh.userData.fireGlow.visible = true;
-      if (camel.chase === w) { camel.chase = null; camel.spit = 0; }
-      flash(r.name + ' снова на печи', '#8ce99a');
+      takeVehicle(r, ride);
       return;
     }
 
-    if (r.speed > 9) { flash('Слишком быстро — притормози, чтобы сойти', '#ffd23f'); return; }
+    if (r.speed > 9) { flash('Слишком быстро — притормози, чтобы выйти', '#ffd23f'); return; }
     if (!r.foot) {
       var kind = r.rider === 'blonde' ? 'woman' : (r.rider === 'emelya' ? 'man' : null);
-      var mesh = World.buildPedestrian(kind);
+      var mesh = World.buildPedestrian(World.theme.people, kind);
       mesh.traverse(function (o) {
         if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
       });
       scene.add(mesh);
       r.foot = { mesh: mesh, dist: r.dist, lane: r.lane, walk: 0, stun: 0,
-                 speed: 0, steps: 0, owner: r };
+                 speed: 0, steps: 0, safe: 0, owner: r };
     }
     r.onFoot = true;
     r.speed = 0;
     r.throttle = false;
     r.boosting = false;
-    // выходим чуть вперёд, иначе камера упрётся в собственную печку
+    // выходим чуть вперёд, иначе камера упрётся в собственный транспорт
     r.foot.dist = track.norm(r.dist + 4.5);
     // сходим в сторону ближней обочины, чтобы не оказаться сразу под колёсами
     var out = r.lane >= 0 ? 1 : -1;
@@ -1135,7 +1142,18 @@
     r.foot.safe = 2;
     r.foot.mesh.visible = true;
     placeWalker(r.foot);
-    flash(r.name + ' слез с печки — осторожно, тут ездят!', '#ffd23f');
+
+    if (r.vehicle === 'stove') {
+      if (!r.stoveMesh) r.stoveMesh = r.mesh;
+      r.stovePos = { dist: r.dist, lane: r.lane };
+      flash(r.name + ' слез с печки — осторожно, тут ездят!', '#ffd23f');
+    } else {
+      // машина остаётся здесь, а печка так и стоит там, где её бросили
+      leaveVehicle(r);
+      if (r.stovePos) { r.dist = r.stovePos.dist; r.lane = r.stovePos.lane; }
+      r.speed = 0;
+      flash(r.name + ' вышел из машины', '#ffd23f');
+    }
   }
 
   function placeWalker(w) {
@@ -1176,7 +1194,9 @@
 
       w.dist = track.norm(w.dist + fwd * v * dt);
       w.lane -= ((right ? 1 : 0) - (left ? 1 : 0)) * v * dt;
-      w.lane = Math.max(-(track.width / 2 + 3.5), Math.min(track.width / 2 + 3.5, w.lane));
+      var wide = jail && jail.inmate === r && !jail.escaped;
+      var limit = wide ? JAIL_WALK : track.width / 2 + 3.5;
+      w.lane = Math.max(-limit, Math.min(limit, w.lane));
 
       var moving = fwd || left || right;
       w.speed = moving ? v : 0;
@@ -1189,6 +1209,7 @@
         }
       }
 
+      clampToJail(w);                    // из тюремного двора не выйти без ключа
       var t = track.tangentAt(w.dist);
       placeWalker(w);
       w.mesh.rotation.y = Math.atan2(t.x, t.z) + (left ? 0.7 : 0) - (right ? 0.7 : 0);
@@ -1197,7 +1218,8 @@
       legs[0].rotation.x = swing;
       legs[1].rotation.x = -swing;
 
-      checkWalkerDanger(r, w, dt);
+      // во дворе тюрьмы своя опасность — охранник, а печки туда не заезжают
+      if (!jail || jail.inmate !== r || jail.escaped) checkWalkerDanger(r, w, dt);
     }
   }
 
@@ -1301,6 +1323,539 @@
     }
     // догнал вплотную — толкает
     if (dist < 3.4 && w.stun <= 0) knockWalker(w.owner, w, info.bump);
+  }
+
+  /* ---------------- Машины на трассе: их можно помять и угнать ---------------- */
+
+  var CAR_COLORS = [0xd8443c, 0x3f7fd8, 0x2f9e5e, 0xe0b23c, 0xe8e4dc, 0x6b4bd8];
+
+  function createCars() {
+    for (var i = 0; i < 2; i++) {
+      var mesh = World.buildCar(CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)]);
+      mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      if (mesh.userData.blob) mesh.userData.blob.visible = !shadowsOn;
+      scene.add(mesh);
+      cars.push({
+        isCar: true, mesh: mesh, dist: 0, lane: 0, speed: 7, owner: null,
+        knock: 0, spin: 0, wheelSpin: 0, parked: false
+      });
+    }
+  }
+
+  function resetCars() {
+    for (var i = 0; i < cars.length; i++) {
+      var c = cars[i];
+      c.owner = null;
+      c.parked = false;
+      c.knock = 0;
+      c.spin = 0;
+      c.dist = track.length * (0.2 + i * 0.45);
+      c.lane = i % 2 ? 4.2 : -4.2;
+      c.speed = 6 + Math.random() * 4;
+      c.mesh.visible = true;
+      c.mesh.rotation.set(0, 0, 0);
+      placeCar(c);
+    }
+  }
+
+  function placeCar(c) {
+    var p = track.pointAt(c.dist);
+    var n = track.sideAt(c.dist);
+    var t = track.tangentAt(c.dist);
+    c.mesh.position.copy(p).addScaledVector(n, c.lane);
+    c.mesh.position.y = p.y;
+    c.mesh.rotation.order = 'YXZ';
+    c.mesh.rotation.y = Math.atan2(t.x, t.z) + Math.PI + c.spin;
+    c.mesh.rotation.x = -Math.atan(track.slopeAt(c.dist));
+  }
+
+  function updateCars(dt) {
+    for (var i = 0; i < cars.length; i++) {
+      var c = cars[i];
+      if (c.owner) continue;                       // за рулём игрок — двигает placeRacer
+
+      if (!c.parked) {
+        c.speed += (7.5 - c.speed) * Math.min(1, dt * 0.4);
+        c.dist = track.norm(c.dist + c.speed * dt);
+      } else {
+        c.speed = Math.max(0, c.speed - 6 * dt);
+        c.dist = track.norm(c.dist + c.speed * dt);
+      }
+      // отлетает после удара печкой
+      if (Math.abs(c.knock) > 0.01) {
+        c.lane += c.knock * dt;
+        c.knock -= c.knock * Math.min(1, dt * 1.4);
+        c.spin += c.knock * dt * 0.14;
+        c.lane = Math.max(-(MAX_LANE + 4), Math.min(MAX_LANE + 4, c.lane));
+      } else {
+        c.spin -= c.spin * Math.min(1, dt * 1.2);
+      }
+      c.wheelSpin -= c.speed * dt / 0.42;
+      var wl = c.mesh.userData.wheels;
+      for (var w = 0; w < wl.length; w++) wl[w].rotation.x = c.wheelSpin;
+      placeCar(c);
+    }
+  }
+
+  /* Печка бортанула машину: ту отбрасывает и мнёт, печка теряет ход. */
+  function checkCarHits() {
+    for (var i = 0; i < racers.length; i++) {
+      var r = racers[i];
+      if (r.dq || r.finished || r.jail > 0 || r.onFoot || r.soarY > 1 || r.speed < 4) continue;
+      for (var k = 0; k < cars.length; k++) {
+        var c = cars[k];
+        if (c.owner === r || !c.mesh.visible) continue;
+        if (c.owner) continue;
+        var along = Math.abs(track.norm(r.dist - c.dist + track.length / 2) - track.length / 2);
+        if (along > 3.8 || Math.abs(r.lane - c.lane) > 2.6) continue;
+
+        var side = r.lane > c.lane ? -1 : 1;
+        c.knock = side * (5 + r.speed * 0.35);
+        c.spin += side * 0.5;
+        c.speed = Math.max(1.5, c.speed * 0.5);
+        c.parked = false;
+        World.dentCar(c.mesh, 1);
+        r.speed *= 0.78;
+        r.skid = -side * 1.4;
+        var d = camera.position.distanceTo(c.mesh.position);
+        sfx.crash();
+        sfx.bump(Math.max(0, 1 - d / 120));
+        for (var s = 0; s < 8; s++) {
+          var sp = c.mesh.position.clone();
+          sp.y += 1;
+          smoke.emit(sp, new THREE.Vector3((Math.random() - 0.5) * 8, 1.5 + Math.random() * 2,
+            (Math.random() - 0.5) * 8), 0.8, 0xb8bec8);
+        }
+        if (r.isHuman) flash(r.name + ' снёс машину с дороги!', '#ffd23f');
+      }
+    }
+  }
+
+  /* ---------------- Угон ---------------- */
+
+  /* Что рядом с пешеходом: своя печка, гражданская или полицейская машина. */
+  function nearestRide(w, r) {
+    var best = null, bestGap = 8;
+    function consider(obj, dist, lane, kind) {
+      var gap = Math.abs(track.norm(w.dist - dist + track.length / 2) - track.length / 2)
+        + Math.abs(w.lane - lane) * 0.7;
+      if (gap < bestGap) { bestGap = gap; best = { obj: obj, kind: kind }; }
+    }
+    var sp = r.stovePos || { dist: r.dist, lane: r.lane };
+    consider(null, sp.dist, sp.lane, 'stove');
+    for (var i = 0; i < cars.length; i++) {
+      if (cars[i].owner) continue;
+      consider(cars[i], cars[i].dist, cars[i].lane, 'car');
+    }
+    for (var k = 0; k < police.length; k++) {
+      var c = police[k];
+      if (!c.active || c.stolen || c.phase === 'chase') continue;
+      consider(c, c.dist, c.lane, 'police');
+    }
+    return best;
+  }
+
+  /* Садимся за руль машины: печка остаётся стоять там, где её бросили. */
+  function takeVehicle(r, ride) {
+    var w = r.foot;
+    if (!r.stoveMesh) r.stoveMesh = r.mesh;
+    if (!r.stovePos) r.stovePos = { dist: r.dist, lane: r.lane };
+
+    r.onFoot = false;
+    if (w) w.mesh.visible = false;
+    if (camel.chase === w) { camel.chase = null; camel.spit = 0; }
+
+    if (ride.kind === 'stove') {
+      r.mesh = r.stoveMesh;
+      r.mesh.visible = true;
+      r.vehicle = 'stove';
+      r.dist = r.stovePos.dist;
+      r.lane = r.stovePos.lane;
+      r.stovePos = null;
+      r.mesh.userData.fire.visible = true;
+      r.mesh.userData.fireGlow.visible = true;
+      if (jail && jail.inmate === r && jail.escaped) releaseFromJail(r, r.name + ': побег удался!');
+      else flash(r.name + ' снова на печи', '#8ce99a');
+    } else if (ride.kind === 'car') {
+      var c = ride.obj;
+      c.owner = r;
+      c.parked = false;
+      r.car = c;
+      r.mesh = c.mesh;
+      r.vehicle = 'car';
+      r.dist = c.dist;
+      r.lane = c.lane;
+      flash(r.name + ' угнал машину!', '#ffd23f');
+      sfx.beep(660, 0.12, 0.14);
+    } else {
+      var pc = ride.obj;
+      pc.stolen = true;
+      pc.owner = r;
+      pc.active = false;
+      r.car = pc;
+      r.mesh = pc.mesh;
+      r.mesh.visible = true;
+      r.vehicle = 'police';
+      r.dist = pc.dist;
+      r.lane = pc.lane;
+      startPoliceChase(r);
+    }
+    r.speed = 0;
+    r.skid = 0;
+    r.flying = false;
+    r.air = 0;
+    placeRacer(r);
+  }
+
+  /* Выходим из машины: она остаётся стоять на дороге. */
+  function leaveVehicle(r) {
+    if (r.vehicle === 'car' && r.car) {
+      r.car.parked = true;
+      r.car.owner = null;
+      r.car.dist = r.dist;
+      r.car.lane = r.lane;
+      r.car.speed = r.speed;
+    } else if (r.vehicle === 'police' && r.car) {
+      r.car.owner = null;
+      r.car.stolen = false;
+      r.car.active = true;
+      r.car.phase = 'parked';
+      r.car.timer = 10;
+      r.car.dist = r.dist;
+      r.car.lane = r.lane;
+      stopPoliceChase(r, 'бросил полицейскую машину');
+    }
+    r.car = null;
+    r.vehicle = 'stove';
+    r.mesh = r.stoveMesh || r.mesh;
+  }
+
+  /* ---------------- Погоня за угонщиком полицейской машины ---------------- */
+
+  function startPoliceChase(r, forced) {
+    chase.target = r;
+    chase.forced = !!forced;
+    chase.timer = 0;
+    var made = 0;
+    for (var i = 0; i < police.length && made < 3; i++) {
+      var c = police[i];
+      if (c.stolen || c.owner) continue;
+      c.active = true;
+      c.phase = 'chase';
+      c.blink = Math.random();
+      c.timer = 999;
+      c.granny = null;
+      c.dist = track.norm(r.dist - 40 - made * 22);
+      c.lane = (made - 1) * 3.4;
+      c.mesh.visible = true;
+      made++;
+    }
+    chase.count = made;
+    sfx.siren(1, 5);
+    music.duck(1.2);
+    flash('УГОН! За тобой гонится полиция — ' + made + ' машины!', '#ff4d4d');
+  }
+
+  function stopPoliceChase(r, why) {
+    if (chase.target !== r) return;
+    chase.target = null;
+    chase.forced = false;
+    for (var i = 0; i < police.length; i++) {
+      if (police[i].phase === 'chase') {
+        police[i].active = false;
+        police[i].phase = 'parked';
+        police[i].mesh.visible = false;
+      }
+    }
+    if (why) flash(why + ' — погоня отстала', '#8ce99a');
+  }
+
+  function updateChase(dt) {
+    var r = chase.target;
+    if (!r) return;
+    if (r.dq || r.finished || r.jail > 0 || (r.vehicle !== 'police' && !chase.forced)) {
+      stopPoliceChase(r, '');
+      return;
+    }
+    chase.timer += dt;
+    for (var i = 0; i < police.length; i++) {
+      var c = police[i];
+      if (c.phase !== 'chase' || !c.active) continue;
+      // догоняют чуть быстрее печки, но не мгновенно
+      var gap = track.norm(r.dist - c.dist);
+      if (gap > track.length / 2) gap -= track.length;
+      var want = MAX_SPEED * 1.06;
+      var step = Math.min(Math.abs(gap), want * dt) * (gap >= 0 ? 1 : -1);
+      c.dist = track.norm(c.dist + step + (gap > 0 ? 0 : want * dt * 0.2));
+      c.lane += Math.max(-4 * dt, Math.min(4 * dt, r.lane - c.lane + (i - 1) * 0.6));
+      c.blink += dt;
+      World.flashPolice(c.mesh, c.blink);
+      var p = track.pointAt(c.dist);
+      var n = track.sideAt(c.dist);
+      var t = track.tangentAt(c.dist);
+      c.mesh.position.copy(p).addScaledVector(n, c.lane);
+      c.mesh.position.y = p.y;
+      c.mesh.rotation.order = 'YXZ';
+      c.mesh.rotation.y = Math.atan2(t.x, t.z);
+      c.mesh.rotation.x = -Math.atan(track.slopeAt(c.dist));
+
+      // поймали
+      if (Math.abs(gap) < 3.6 && Math.abs(c.lane - r.lane) < 2.4) {
+        leaveVehicle(r);
+        r.mesh.visible = true;
+        jailRacer(r, 25, 'попался на угоне полицейской машины');
+        stopPoliceChase(r, '');
+        return;
+      }
+    }
+    if (chase.timer > 5 && Math.floor(chase.timer) % 6 === 0 && chase.timer % 6 < dt) {
+      sfx.siren(0.7, 2);
+    }
+  }
+
+  /* ---------------- Настоящая тюрьма и побег ---------------- */
+
+  /* Двор стоит сбоку от трассы. Пешеход ходит в тех же координатах
+     (дистанция вдоль круга и полоса поперёк), поэтому двор — это просто
+     прямоугольник полос от JAIL_NEAR до JAIL_FAR. */
+  var JAIL_U = 0.66;             // где на круге стоит тюрьма
+  var JAIL_NEAR = 18;            // полоса ворот
+  var JAIL_FAR = 46;             // дальняя стена
+  var JAIL_WALK = 34;            // дальше начинается барак — туда не зайти
+  var JAIL_HALF = 20;            // половина двора вдоль трассы
+
+  function createJail() {
+    var mesh = World.buildJail();
+    // двор ставим туда, где трасса идёт по ровному месту: тогда он не висит
+    // над насыпью и пешеход ходит вровень с землёй
+    var d = World.jailSpot(track).dist;
+    var p = track.pointAt(d);
+    var n = track.sideAt(d);
+    var t = track.tangentAt(d);
+    // локальный X — вдоль трассы, локальный Z — от дороги наружу
+    mesh.position.copy(p).addScaledVector(n, JAIL_NEAR);
+    mesh.position.y = p.y;
+    mesh.rotation.y = Math.atan2(n.x, n.z);
+    mesh.traverse(function (o) {
+      if (o.isMesh) { o.receiveShadow = true; }
+    });
+    scene.add(mesh);
+
+    var guard = World.buildPedestrian('guard', 'man');
+    guard.visible = false;
+    scene.add(guard);
+
+    var key = World.buildKey();
+    key.visible = false;
+    scene.add(key);
+
+    jail = {
+      mesh: mesh, guard: guard, key: key,
+      dist: d, side: 1, open: false, hasKey: false, escaped: false,
+      keyDist: d, keyLane: 34, guardDist: d, guardDir: 1, guardWalk: 0,
+      inmate: null, spin: 0, caught: 0
+    };
+    // ключ и охранник живут в тех же координатах, что и пешеход
+    resetJail();
+  }
+
+  function jailPlace(obj, dist, lane, y) {
+    var p = track.pointAt(dist);
+    var n = track.sideAt(dist);
+    obj.position.copy(p).addScaledVector(n, lane);
+    obj.position.y = p.y + (y || 0);
+  }
+
+  function resetJail() {
+    if (!jail) return;
+    jail.open = false;
+    jail.hasKey = false;
+    jail.escaped = false;
+    jail.inmate = null;
+    jail.caught = 0;
+    jail.guardDist = jail.dist - 8;
+    jail.guardDir = 1;
+    jail.key.visible = false;
+    jail.guard.visible = false;
+    jail.mesh.userData.leaves[0].rotation.y = 0;
+    jail.mesh.userData.leaves[1].rotation.y = 0;
+  }
+
+  function dropKey() {
+    jail.keyDist = jail.dist + (Math.random() - 0.5) * 30;
+    jail.keyLane = 22 + Math.random() * 11;
+    jail.key.visible = true;
+    jail.hasKey = false;
+  }
+
+  /* Живого игрока сажают по-настоящему: он оказывается во дворе тюрьмы,
+     печку отгоняют за ворота, а выбраться можно только с ключом. */
+  function sendToJail(r, seconds) {
+    if (!r.isHuman || !jail || jail.inmate) return false;
+    if (!r.foot) {
+      var kind = r.rider === 'blonde' ? 'woman' : (r.rider === 'emelya' ? 'man' : null);
+      var mesh = World.buildPedestrian(World.theme.people, kind);
+      mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      scene.add(mesh);
+      r.foot = { mesh: mesh, dist: r.dist, lane: r.lane, walk: 0, stun: 0,
+                 speed: 0, steps: 0, safe: 0, owner: r };
+    }
+    if (!r.stoveMesh) r.stoveMesh = r.mesh;
+
+    jail.inmate = r;
+    jail.escaped = false;
+    dropKey();
+    jail.guard.visible = true;
+
+    // печку ставят на стоянку у ворот
+    r.dist = track.norm(jail.dist + 10);
+    r.lane = JAIL_NEAR - 5;
+    r.speed = 0;
+    r.stovePos = { dist: r.dist, lane: r.lane };
+    placeRacer(r);
+
+    // сам сиделец — в дальнем углу двора, у барака
+    r.onFoot = true;
+    r.foot.dist = track.norm(jail.dist - 12);
+    r.foot.lane = JAIL_WALK - 2;
+    r.foot.stun = 0;
+    r.foot.safe = 3;
+    r.foot.mesh.visible = true;
+    placeWalker(r.foot);
+
+    // камеру переносим во двор сразу, без плавного отъезда
+    var jp = track.pointAt(jail.dist - 2);
+    var jn = track.sideAt(jail.dist - 2);
+    camPos.copy(jp).addScaledVector(jn, JAIL_NEAR - 3);
+    camPos.y = jp.y + 21;
+    camLook.copy(r.foot.mesh.position);
+
+    flash('ТЮРЬМА! Найди ключ во дворе, открой ворота и беги к печке', '#ff8a3d');
+    sfx.jailClang();
+    return true;
+  }
+
+  function releaseFromJail(r, why) {
+    if (!jail || jail.inmate !== r) return;
+    jail.inmate = null;
+    jail.escaped = false;
+    jail.key.visible = false;
+    jail.guard.visible = false;
+    jail.hasKey = false;
+    jail.open = false;
+    jail.mesh.userData.leaves[0].rotation.y = 0;
+    jail.mesh.userData.leaves[1].rotation.y = 0;
+    r.jail = 0;
+    if (r.status) r.status.visible = false;
+    if (r.onFoot) {           // срок вышел, пока гулял по двору — сразу в печку
+      r.onFoot = false;
+      if (r.foot) r.foot.mesh.visible = false;
+      if (r.stovePos) { r.dist = r.stovePos.dist; r.lane = r.stovePos.lane; r.stovePos = null; }
+      r.mesh = r.stoveMesh || r.mesh;
+      r.mesh.visible = true;
+    }
+    r.mesh.userData.fire.visible = true;
+    r.mesh.userData.fireGlow.visible = true;
+    if (why) flash(why, '#8ce99a');
+  }
+
+  /* Двор: ключ, охранник и ворота. */
+  function updateJail(dt) {
+    if (!jail) return;
+    jail.spin += dt * 2;
+    if (jail.key.visible) {
+      jail.key.rotation.y = jail.spin;
+      jailPlace(jail.key, jail.keyDist, jail.keyLane, 1.1 + Math.sin(jail.spin) * 0.15);
+    }
+
+    var r = jail.inmate;
+    if (!r) return;
+    var w = r.foot;
+
+    // охранник шагает по двору вдоль барака
+    jail.guardWalk += dt * 3.4;
+    jail.guardDist += jail.guardDir * 2.1 * dt;
+    if (jail.guardDist > jail.dist + JAIL_HALF - 5) jail.guardDir = -1;
+    if (jail.guardDist < jail.dist - JAIL_HALF + 5) jail.guardDir = 1;
+    var gLane = JAIL_WALK - 3;
+    // если сиделец без ключа далеко — охранник просто ходит,
+    // а как только ключ у него, идёт наперехват
+    if (jail.hasKey && !jail.escaped) {
+      var toW = w.dist - jail.guardDist;
+      jail.guardDist += Math.max(-3.4 * dt, Math.min(3.4 * dt, toW));
+      gLane += (w.lane - gLane) * Math.min(1, dt * 0.8);
+    }
+    jailPlace(jail.guard, jail.guardDist, gLane, 0);
+    var gt = track.tangentAt(jail.guardDist);
+    jail.guard.rotation.y = Math.atan2(gt.x, gt.z) + (jail.guardDir > 0 ? 0 : Math.PI);
+    var glegs = jail.guard.userData.legs;
+    glegs[0].rotation.x = Math.sin(jail.guardWalk) * 0.5;
+    glegs[1].rotation.x = -Math.sin(jail.guardWalk) * 0.5;
+
+    if (jail.caught > 0) jail.caught -= dt;
+
+    // поднял ключ
+    if (!jail.hasKey && jail.key.visible && w.stun <= 0) {
+      var dk = Math.abs(track.norm(w.dist - jail.keyDist + track.length / 2) - track.length / 2);
+      if (dk < 2.4 && Math.abs(w.lane - jail.keyLane) < 2.4) {
+        jail.hasKey = true;
+        jail.key.visible = false;
+        sfx.coinChime();
+        flash('Ключ у тебя! К воротам, пока охранник не заметил', '#ffd23f');
+      }
+    }
+
+    // охранник поймал во дворе
+    if (jail.caught <= 0 && !jail.escaped && w.stun <= 0) {
+      var dg = Math.abs(track.norm(w.dist - jail.guardDist + track.length / 2) - track.length / 2);
+      if (dg < 2.6 && Math.abs(w.lane - gLane) < 2.6) {
+        jail.caught = 4;
+        w.stun = 2.5;
+        w.dist = track.norm(jail.dist - 12);
+        w.lane = JAIL_WALK - 2;
+        if (jail.hasKey) { dropKey(); flash('Охранник отобрал ключ и вернул тебя в барак!', '#ff4d4d'); }
+        else flash('Охранник поймал тебя и вернул в барак!', '#ff4d4d');
+        sfx.buzzer();
+      }
+    }
+
+    // ворота открываются, когда подошёл с ключом
+    var toGate = Math.abs(track.norm(w.dist - jail.dist + track.length / 2) - track.length / 2);
+    if (jail.hasKey && !jail.open && toGate < 8 && w.lane < JAIL_NEAR + 9) {
+      jail.open = true;
+      sfx.jailClang();
+      flash('Ворота открыты — беги к печке!', '#8ce99a');
+    }
+    var want = jail.open ? 1.35 : 0;
+    var lv = jail.mesh.userData.leaves;
+    lv[0].rotation.y += (-want - lv[0].rotation.y) * Math.min(1, dt * 2.5);
+    lv[1].rotation.y += (want - lv[1].rotation.y) * Math.min(1, dt * 2.5);
+
+    // вышел за ворота — срок больше не идёт
+    if (jail.open && !jail.escaped && w.lane < JAIL_NEAR - 1) {
+      jail.escaped = true;
+      r.jail = 0;
+      if (r.status) r.status.visible = false;
+      sfx.fanfare();
+      music.duck(1.5);
+      flash('ПОБЕГ! Садись в печку и догоняй', '#ffd23f');
+    }
+  }
+
+  /* Границы двора: пока сидишь — из-за стен не выйти. */
+  function clampToJail(w) {
+    if (!jail || jail.inmate !== w.owner || jail.escaped) return;
+    var along = track.norm(w.dist - jail.dist + track.length / 2) - track.length / 2;
+    along = Math.max(-JAIL_HALF + 1.5, Math.min(JAIL_HALF - 1.5, along));
+    w.dist = track.norm(jail.dist + along);
+    var far = Math.min(JAIL_WALK, w.lane);
+    var near = JAIL_NEAR + 1.2;
+    if (jail.open && Math.abs(along) < 4) near = JAIL_NEAR - 6;   // проём ворот
+    w.lane = Math.max(near, Math.min(far, w.lane));
   }
 
   /* ---------------- Бабушки на дороге ---------------- */
@@ -1619,6 +2174,10 @@
         air: 0,            // насколько печка сейчас оторвалась от дороги
         onFoot: false,     // хозяин слез с печки и гуляет
         foot: null,
+        vehicle: 'stove',  // на чём едет: печка, машина или полицейская
+        car: null,
+        stoveMesh: null,
+        stovePos: null,
         soarLeft: 0,       // сколько ещё лететь на солнечных руках
         soarY: 0,          // текущая высота полёта над дорогой
         flying: false,
@@ -1738,12 +2297,25 @@
     return b > a;
   }
 
-  /* Хозяина возвращают в печку насильно: тюрьма, снятие, финиш. */
+  /* Хозяина возвращают в печку насильно: тюрьма, снятие, финиш.
+     Угнанная машина при этом остаётся стоять там, где её отобрали. */
   function dismount(r) {
-    if (!r.onFoot) return;
-    r.onFoot = false;
-    if (r.foot) r.foot.mesh.visible = false;
-    if (camel.chase && camel.chase.owner === r) { camel.chase = null; camel.spit = 0; }
+    if (r.onFoot) {
+      r.onFoot = false;
+      if (r.foot) r.foot.mesh.visible = false;
+      if (camel.chase && camel.chase.owner === r) { camel.chase = null; camel.spit = 0; }
+    }
+    if (r.vehicle && r.vehicle !== 'stove') {
+      leaveVehicle(r);
+      if (r.stovePos) { r.dist = r.stovePos.dist; r.lane = r.stovePos.lane; }
+      r.stovePos = null;
+      r.speed = 0;
+      if (r.mesh) r.mesh.visible = true;
+    } else if (r.stovePos) {
+      r.dist = r.stovePos.dist;
+      r.lane = r.stovePos.lane;
+      r.stovePos = null;
+    }
   }
 
   function disqualify(r, reason) {
@@ -1881,10 +2453,13 @@
       r.steer = 0;
       if (r.status) r.status.userData.set('ТЮРЬМА ' + Math.ceil(r.jail) + ' с', '#ff8a3d');
       if (r.jail === 0) {
-        if (r.status) r.status.visible = false;
-        r.mesh.userData.fire.visible = true;
-        r.mesh.userData.fireGlow.visible = true;
-        flash(r.name + ' вышел из тюрьмы', '#8ce99a');
+        if (jail && jail.inmate === r) releaseFromJail(r, r.name + ' отсидел срок');
+        else {
+          if (r.status) r.status.visible = false;
+          r.mesh.userData.fire.visible = true;
+          r.mesh.userData.fireGlow.visible = true;
+          flash(r.name + ' вышел из тюрьмы', '#8ce99a');
+        }
       }
       placeRacer(r);
       animateStove(r, dt);
@@ -1915,7 +2490,8 @@
         var left = pressed(r.keys.left) || touchSteer[r.id] === -1;
         var right = pressed(r.keys.right) || touchSteer[r.id] === 1;
         r.steer = (right ? 1 : 0) - (left ? 1 : 0);
-        wantBoost = r.canBoost && (pressed(r.keys.boost) || !!touchBoost[r.id]);
+        wantBoost = r.canBoost && r.vehicle === 'stove' &&
+          (pressed(r.keys.boost) || !!touchBoost[r.id]);
       } else {
         r.throttle = aiThrottle(r);
         r.steer = aiSteer(r);
@@ -1940,8 +2516,10 @@
 
       var soaring = r.soarY > 1;
       var onEdge = Math.abs(r.lane) > EDGE_LANE && !soaring;
+      // машина быстрее печки и лучше держит дорогу, полицейская — ещё быстрее
+      var vehK = r.vehicle === 'police' ? 1.3 : (r.vehicle === 'car' ? 1.18 : 1);
       var skill = r.isHuman ? 1 : r.ai.skill * (admin.weakAI ? 0.75 : 1);
-      var maxV = (r.boosting ? BOOST_SPEED : MAX_SPEED) * skill * (onEdge ? EDGE_PENALTY : 1);
+      var maxV = (r.boosting ? BOOST_SPEED : MAX_SPEED) * skill * vehK * (onEdge ? EDGE_PENALTY : 1);
       var accel = r.boosting ? BOOST_ACCEL : ACCEL;
       if (r.throttle) r.speed = Math.min(maxV, r.speed + accel * dt);
       else r.speed = Math.max(0, r.speed - BRAKE * dt);
@@ -2152,20 +2730,24 @@
     for (var i = 0; i < u.wheels.length; i++) u.wheels[i].rotation.x -= spin;
 
     r.bob += dt * (2 + r.speed * 0.6);
-    u.body.position.y = Math.sin(r.bob) * 0.04 * Math.min(1, r.speed / 8);
+    u.body.position.y = (u.dentDrop || 0) + Math.sin(r.bob) * 0.04 * Math.min(1, r.speed / 8);
     var flick = 0.85 + Math.sin(r.bob * 3.3) * 0.15 + (r.throttle ? 0.35 : 0);
     if (r.boosting) flick *= 1.7;
-    u.fireGlow.scale.set(3 * flick, 2.4 * flick, 1);
+    var gb = u.isCar ? 0.8 : 3;
+    u.fireGlow.scale.set(gb * flick, gb * 0.8 * flick, 1);
     if (u.vent) u.vent.scale.set(1.7 * flick, 1.1 * flick, 1);
     u.fire.material.color.setHex(r.boosting ? 0xfff0a0 : 0xff8a24);
 
     if (!r.dq) {
       // у далёких печек дыма меньше: спрайты — самая дорогая часть кадра
       var far = camera.position.distanceTo(r.mesh.position) > 130 ? 0.35 : 1;
-      r.smokeAcc += dt * far * (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0) + (r.boosting ? 14 : 0));
+      var puff = u.isCar ? 0.25 : 1;      // у машины из трубы идёт куда меньше
+      r.smokeAcc += dt * far * puff *
+        (2.5 + r.speed * 0.5 + (r.throttle ? 6 : 0) + (r.boosting ? 14 : 0));
       while (r.smokeAcc > 1) {
         r.smokeAcc -= 1;
-        var pipe = new THREE.Vector3(-0.6, 5.15, -1.05).applyEuler(r.mesh.rotation).add(r.mesh.position);
+        var off = u.pipe || new THREE.Vector3(-0.6, 5.15, -1.05);
+        var pipe = off.clone().applyEuler(r.mesh.rotation).add(r.mesh.position);
         var back = track.tangentAt(r.dist).multiplyScalar(-r.speed * 0.25);
         back.y = 2.2 + Math.random() * 1.4;
         back.x += (Math.random() - 0.5) * 1.4;
@@ -2211,6 +2793,7 @@
     r.footCam.lane = r.foot.lane;
     r.footCam.mesh = r.foot.mesh;
     r.footCam.speed = r.foot.speed;
+    r.footCam.inJail = !!(jail && jail.inmate === r && !jail.escaped);
     return r.footCam;
   }
 
@@ -2230,6 +2813,22 @@
     }
 
     var lift = r.soarY || 0;
+
+    // в тюремном дворе камера смотрит на двор сверху сбоку: так виден и ключ,
+    // и охранник, и ворота
+    if (r.inJail && cameraMode !== 2) {
+      var jp = track.pointAt(jail.dist - 2);
+      var jn = track.sideAt(jail.dist - 2);
+      desired.copy(jp).addScaledVector(jn, JAIL_NEAR - 3);
+      desired.y = jp.y + 21;
+      camPos.lerp(desired, 1 - Math.exp(-3 * dt));
+      camLook.lerp(r.mesh.position, 1 - Math.exp(-5 * dt));
+      camera.position.copy(camPos);
+      if (Math.abs(camera.fov - 62) > 0.1) { camera.fov = 62; camera.updateProjectionMatrix(); }
+      camera.lookAt(camLook);
+      return;
+    }
+
     if (cameraMode === 0) {
       desired.copy(behind(r.walker ? 8.5 : (lift > 1 ? 21 : (r.boosting ? 18.5 : 16)),
         (r.walker ? 6.2 : (r.boosting ? 7.4 : 6.8)) + lift * 0.9, 0.85));
@@ -2356,8 +2955,16 @@
     }
 
     // тюрьма и песчаная буря
-    ui.jail.style.opacity = f.jail > 0 ? '1' : '0';
-    if (f.jail > 0) ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' + f.jailReason;
+    var inYard = jail && jail.inmate === f && !jail.escaped;
+    ui.jail.style.opacity = (f.jail > 0 || inYard) ? '1' : '0';
+    ui.jail.classList.toggle('quest', !!inYard);
+    if (inYard) {
+      ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' +
+        (jail.hasKey ? (jail.open ? 'ворота открыты — беги к печке!' : 'ключ у тебя — к воротам!')
+                     : 'найди ключ во дворе');
+    } else if (f.jail > 0) {
+      ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' + f.jailReason;
+    }
     ui.storm.style.opacity = storm.level > 0.25 ? '1' : '0';
     if (storm.level > 0.25) {
       ui.storm.textContent = storm.kind === 'rain' ? '🌧 ЛИВЕНЬ'
@@ -2452,12 +3059,16 @@
       updateAnimals(dt);
       updateCoin(dt);
       updateSigns(dt);
+      updateCars(dt);
+      updateChase(dt);
+      updateJail(dt);
       updateWalkers(dt);
       for (var i = 0; i < racers.length; i++) updateRacer(racers[i], dt);
       resolveContacts();
       checkGrannyHits();
       checkHazardHits();
       checkPuddles(dt);
+      checkCarHits();
       checkSpeedSigns();
       for (var pi = 0; pi < racers.length; pi++) {
         if (!racers[pi].dq) placeRacer(racers[pi]);
@@ -2626,6 +3237,8 @@
     randomizeLights();
     resetGrannies();
     resetHazards();
+    resetCars();
+    resetJail();
     resetCoin();
     buildPedals(humanCount);
     touchThrottle = {};
@@ -2817,6 +3430,24 @@
     document.getElementById('adm-birds').addEventListener('click', function () {
       spawnFlock();
     });
+    document.getElementById('adm-car').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f || !cars.length) return;
+      var c = cars[0];
+      c.owner = null;
+      c.parked = true;
+      c.dist = track.norm(f.dist + 30);
+      c.lane = f.lane;
+      c.speed = 0;
+      c.mesh.visible = true;
+      placeCar(c);
+    });
+    document.getElementById('adm-chase').addEventListener('click', function () {
+      var f = focusRacer();
+      if (!f) return;
+      if (chase.target) stopPoliceChase(chase.target, 'админ отозвал погоню');
+      else startPoliceChase(f, true);
+    });
     document.getElementById('adm-restart').addEventListener('click', function () {
       startRace(lastHumans, totalLaps);
     });
@@ -2952,6 +3583,27 @@
   }
 
   /* Служебный снимок состояния — удобно для отладки из консоли. */
+  /* Для отладки: посадить того, за кем камера, прямо сейчас. */
+  Game.jailMe = function () {
+    var f = focusRacer();
+    if (f) jailRacer(f, 30, 'админ отправил в тюрьму');
+    return !!f;
+  };
+
+  /* Отладка тюремной камеры: где стоит камера, куда смотрит и где пешеход. */
+  Game.probe = function () {
+    var f = focusRacer();
+    var w = f && f.foot;
+    return {
+      cam: camera.position.toArray().map(function (v) { return +v.toFixed(1); }),
+      look: camLook.toArray().map(function (v) { return +v.toFixed(1); }),
+      walker: w ? w.mesh.position.toArray().map(function (v) { return +v.toFixed(1); }) : null,
+      walkerVisible: w ? w.mesh.visible : null,
+      jailMesh: jail ? jail.mesh.position.toArray().map(function (v) { return +v.toFixed(1); }) : null,
+      inJail: !!(jail && jail.inmate === f)
+    };
+  };
+
   Game.debug = function () {
     return {
       state: state,
@@ -2968,6 +3620,14 @@
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
       storm: { active: storm.active, kind: storm.kind, level: +storm.level.toFixed(2) },
       map: mapId, difficulty: difficulty.id, beast: camel ? camel.kind : null,
+      jail: jail && jail.inmate ? { who: jail.inmate.name, hasKey: jail.hasKey,
+        open: jail.open, escaped: jail.escaped, keyDist: Math.round(jail.keyDist),
+        keyLane: +jail.keyLane.toFixed(1), guardDist: Math.round(jail.guardDist) } : null,
+      cars: cars.map(function (c) {
+        return { dist: Math.round(c.dist), lane: +c.lane.toFixed(1),
+                 dents: c.mesh.userData.dents || 0, taken: !!c.owner };
+      }),
+      chase: chase.target ? { who: chase.target.name, cars: chase.count } : null,
       people: World.theme.people,
       coin: coin && coin.active ? { dist: Math.round(coin.dist), lane: +coin.lane.toFixed(1) } : null,
       birds: birds.filter(function (b) { return b.active; }).length,
@@ -2991,7 +3651,7 @@
           reason: r.dqReason || null, rider: r.rider,
           jail: +r.jail.toFixed(1), jailReason: r.jailReason || null, skid: +r.skid.toFixed(2),
           soar: +(r.soarY || 0).toFixed(1), soarLeft: +(r.soarLeft || 0).toFixed(1),
-          onFoot: !!r.onFoot,
+          onFoot: !!r.onFoot, vehicle: r.vehicle,
           foot: r.foot && r.onFoot ? { dist: Math.round(r.foot.dist), lane: +r.foot.lane.toFixed(1),
             stun: +r.foot.stun.toFixed(1) } : null,
           throttle: r.throttle,
@@ -3071,6 +3731,11 @@
   };
 
   global.Game = Game;
+  global.__jailme = function () {
+    var r = Game.focus && Game.focus();
+    return Game.jailMe();
+  };
+  global.__probe = Game.probe;
   global.__dbg = Game.debug;
   global.__renderInfo = Game.renderInfo;
   global.__ground = Game.groundUnder;

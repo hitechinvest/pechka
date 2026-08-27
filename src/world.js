@@ -1098,7 +1098,8 @@
     var C = spotAt(0.26, -96);
     var D = spotAt(0.76, 92);
     var E = spotAt(0.40, 88);
-    var reserved = [[A, 105], [B, 95], [C, 70], [D, 70], [E, 60]];
+    var J = spotAt(0.66, 34);      // тюремный двор — дома его тоже обходят
+    var reserved = [[A, 105], [B, 95], [C, 70], [D, 70], [E, 60], [J, 62]];
 
     // Небоскрёбы: четыре «квартала» с общими материалами, внутри квартала всё склеено
     var BUCKETS = 4;
@@ -1226,6 +1227,7 @@
       var n = track.sideAt(d);
       var sideSign = (i % 2 === 0) ? 1 : -1;
       var off = World.roadFootprint(track, d) + 3 + Math.random() * 7;
+      if (World.inJailZone(track, d, sideSign * off)) continue;   // во дворе тюрьмы не сажаем
       var tp = p.clone().addScaledVector(n, sideSign * off);
       if (theme.trees === 'palm') World.palmGeometry(tp.x, tp.z, trunkGeos, leafGeos, nutGeos);
       else World.treeGeometry(theme.trees, tp.x, tp.z, trunkGeos, leafGeos);
@@ -1262,6 +1264,7 @@
         var cn = track.sideAt(cd);
         var cs = (c1 % 2 === 0) ? -1 : 1;
         var coff = World.roadFootprint(track, cd) + 5 + Math.random() * 16;
+        if (World.inJailZone(track, cd, cs * coff)) continue;
         var cpos = cp.clone().addScaledVector(cn, cs * coff);
         World.cactusGeometry(cpos.x + (Math.random() - 0.5) * 6,
                              cpos.z + (Math.random() - 0.5) * 6, cactusGeos);
@@ -2740,6 +2743,10 @@
 
   World.buildPoliceCar = function () {
     var g = new THREE.Group();
+    // кузов отдельной группой: за руль этой машины можно сесть,
+    // а тогда её качает на ходу, как печку
+    var carBody = new THREE.Group();
+    g.add(carBody);
 
     // Корпус: борта разные — слева по-русски, справа по-арабски.
     // Порядок групп у BoxGeometry: +X, −X, +Y, −Y, +Z, −Z.
@@ -2749,7 +2756,7 @@
     var body = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.75, 4.6),
       [ru, ar, plain, plain, plain, plain]);
     body.position.y = 0.72;
-    g.add(body);
+    carBody.add(body);
 
     var bumpers = [];
     for (var b = -1; b <= 1; b += 2) {
@@ -2757,19 +2764,19 @@
       bumper.translate(0, 0.5, b * 2.32);
       bumpers.push(bumper);
     }
-    g.add(new THREE.Mesh(World.mergeGeometries(bumpers), plain));
+    carBody.add(new THREE.Mesh(World.mergeGeometries(bumpers), plain));
 
     // кабина
     var cabin = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.62, 2.2),
       new THREE.MeshLambertMaterial({ color: 0x28313d }));
     cabin.position.set(0, 1.4, -0.15);
-    g.add(cabin);
+    carBody.add(cabin);
 
     // мигалки
     var bar = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 0.34),
       new THREE.MeshLambertMaterial({ color: 0x1b2028 }));
     bar.position.set(0, 1.76, -0.15);
-    g.add(bar);
+    carBody.add(bar);
 
     var lamps = {}, glows = {};
     var defs = [['red', 0xff2b2b, -0.34, 255, 60, 60], ['blue', 0x2b6bff, 0.34, 80, 130, 255]];
@@ -2779,7 +2786,7 @@
         new THREE.MeshBasicMaterial({ color: d[1] }));
       lamp.position.set(d[2], 1.88, -0.15);
       lamp.userData.baseColor = new THREE.Color(d[1]);
-      g.add(lamp);
+      carBody.add(lamp);
       lamps[d[0]] = lamp;
 
       var glow = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -2788,7 +2795,7 @@
       }));
       glow.scale.set(3.4, 3.4, 1);
       glow.position.copy(lamp.position);
-      g.add(glow);
+      carBody.add(glow);
       glows[d[0]] = glow;
     }
 
@@ -2813,7 +2820,23 @@
     g.add(shadow);
 
     g.visible = false;
-    g.userData = { lamps: lamps, glows: glows, blob: shadow };
+    // выхлоп: те же поля, что у печки, чтобы машину можно было угнать
+    var fire = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16),
+      new THREE.MeshBasicMaterial({ color: 0xff8a24 }));
+    fire.position.set(0.6, 0.45, -2.3);
+    fire.visible = false;
+    g.add(fire);
+    var fireGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: World.glowTexture(255, 190, 120), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.45
+    }));
+    fireGlow.scale.set(0.7, 0.7, 1);
+    fireGlow.position.set(0.6, 0.45, -2.4);
+    g.add(fireGlow);
+
+    g.userData = { lamps: lamps, glows: glows, blob: shadow, isCar: true, isPolice: true,
+      body: carBody, wheels: [], fire: fire, fireGlow: fireGlow, label: null,
+      pipe: new THREE.Vector3(0.6, 0.55, -2.4), dents: 0 };
     return g;
   };
 
@@ -3867,6 +3890,10 @@
       bottom = pick([14, 30, 27]);
       legColor = bottom;
       shoe = 7;
+    } else if (style === 'guard') {
+      kind = 'man';
+      top = 14; bottom = 14; legColor = 14;    // тёмно-синяя форма
+      shoe = 7;
     }
 
     // --- ноги: две отдельные сетки с осью в бедре
@@ -4050,6 +4077,14 @@
       msc.setPosition(0, 1.42, 0);
       scarf.applyMatrix4(msc);
       body.push(paint(scarf, pick([24, 9, 28])));
+    } else if (style === 'guard') {
+      body.push(paint(cap, 14));               // фуражка с козырьком
+      var visor = new THREE.BoxGeometry(0.26, 0.04, 0.12);
+      visor.translate(0, 1.6, 0.14);
+      body.push(paint(visor, 7));
+      var band = new THREE.CylinderGeometry(0.134, 0.134, 0.05, 14);
+      band.translate(0, 1.585, 0);
+      body.push(paint(band, 7));
     } else {
       body.push(paint(cap, hair));
       if (kind === 'woman') {
@@ -5250,6 +5285,394 @@
              hit: 'врезался в улитку', chase: 'Улитка неспешно поползла за тобой…',
              attack: 'улитка облепила тебя слизью', bump: 'улитка подмяла тебя под ногу',
              swing: 1.2, runSpeed: 1.1, color: 0xa8d38a }
+  };
+
+  /* ---------- Гражданская машина (её можно угнать) ---------- */
+
+  /* Легковушка на ходу: кузов, стёкла, фары, колёса.
+     userData сделан таким же, как у печки, чтобы за руль можно было сесть. */
+  World.buildCar = function (color, label) {
+    var g = new THREE.Group();
+    var paintMat = new THREE.MeshPhongMaterial({ color: color, specular: 0x9aa4b0, shininess: 55 });
+    var glassMat = new THREE.MeshPhongMaterial({ color: 0x2b3644, specular: 0xcfe4ff, shininess: 90 });
+    var darkMat = new THREE.MeshLambertMaterial({ color: 0x1c1f24 });
+    var chromeMat = new THREE.MeshPhongMaterial({ color: 0xc8cdd4, specular: 0xffffff, shininess: 80 });
+
+    // кузов качается на ходу — поэтому отдельной группой
+    var body = new THREE.Group();
+    g.add(body);
+
+    var shell = [];
+    var hull = new THREE.BoxGeometry(2.15, 0.8, 4.7);
+    hull.translate(0, 0.78, 0);
+    shell.push(hull);
+    var hood = new THREE.BoxGeometry(2.0, 0.35, 1.5);
+    hood.translate(0, 1.2, 1.55);
+    shell.push(hood);
+    var trunk = new THREE.BoxGeometry(2.0, 0.4, 1.2);
+    trunk.translate(0, 1.22, -1.7);
+    shell.push(trunk);
+    // крыша со скошенными стойками
+    var roof = new THREE.BoxGeometry(1.86, 0.12, 2.1);
+    roof.translate(0, 1.94, -0.2);
+    shell.push(roof);
+    for (var px = -1; px <= 1; px += 2) {
+      for (var pz = -1; pz <= 1; pz += 2) {
+        var pillar = new THREE.BoxGeometry(0.14, 0.75, 0.16);
+        var mp = new THREE.Matrix4().makeRotationX(pz * 0.35);
+        mp.setPosition(px * 0.86, 1.56, -0.2 + pz * 1.0);
+        pillar.applyMatrix4(mp);
+        shell.push(pillar);
+      }
+    }
+    body.add(new THREE.Mesh(World.mergeGeometries(shell), paintMat));
+
+    // стёкла
+    var glass = [];
+    var wind = new THREE.BoxGeometry(1.8, 0.68, 0.1);
+    var mw = new THREE.Matrix4().makeRotationX(-0.4);
+    mw.setPosition(0, 1.6, 0.86);
+    wind.applyMatrix4(mw);
+    glass.push(wind);
+    var rear = new THREE.BoxGeometry(1.8, 0.6, 0.1);
+    var mr = new THREE.Matrix4().makeRotationX(0.42);
+    mr.setPosition(0, 1.58, -1.26);
+    rear.applyMatrix4(mr);
+    glass.push(rear);
+    for (var sx = -1; sx <= 1; sx += 2) {
+      var side = new THREE.BoxGeometry(0.08, 0.55, 1.9);
+      side.translate(sx * 0.94, 1.56, -0.2);
+      glass.push(side);
+    }
+    body.add(new THREE.Mesh(World.mergeGeometries(glass), glassMat));
+
+    // бамперы, решётка, зеркала
+    var chrome = [];
+    for (var b = -1; b <= 1; b += 2) {
+      var bumper = new THREE.BoxGeometry(2.2, 0.26, 0.26);
+      bumper.translate(0, 0.62, b * 2.42);
+      chrome.push(bumper);
+    }
+    var grille = new THREE.BoxGeometry(1.5, 0.2, 0.1);
+    grille.translate(0, 1.0, 2.34);
+    chrome.push(grille);
+    for (var mx = -1; mx <= 1; mx += 2) {
+      var mirror = new THREE.BoxGeometry(0.3, 0.14, 0.12);
+      mirror.translate(mx * 1.16, 1.5, 0.8);
+      chrome.push(mirror);
+    }
+    body.add(new THREE.Mesh(World.mergeGeometries(chrome), chromeMat));
+
+    // фары и фонари
+    var lights = [];
+    for (var lx = -1; lx <= 1; lx += 2) {
+      var lamp = new THREE.BoxGeometry(0.5, 0.22, 0.1);
+      lamp.translate(lx * 0.7, 1.06, 2.36);
+      lights.push(lamp);
+    }
+    body.add(new THREE.Mesh(World.mergeGeometries(lights),
+      new THREE.MeshBasicMaterial({ color: 0xfff4d0 })));
+    var tails = [];
+    for (var tx = -1; tx <= 1; tx += 2) {
+      var tl = new THREE.BoxGeometry(0.42, 0.2, 0.1);
+      tl.translate(tx * 0.72, 1.14, -2.32);
+      tails.push(tl);
+    }
+    body.add(new THREE.Mesh(World.mergeGeometries(tails),
+      new THREE.MeshBasicMaterial({ color: 0xd83a2a })));
+
+    // колёса крутятся, поэтому каждое — своя сетка
+    var wheels = [];
+    var tyreMat = new THREE.MeshLambertMaterial({ color: 0x17181c });
+    for (var wx = -1; wx <= 1; wx += 2) {
+      for (var wz = -1; wz <= 1; wz += 2) {
+        var wheel = new THREE.Group();
+        wheel.position.set(wx * 1.02, 0.42, wz * 1.55);
+        var tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.3, 12), tyreMat);
+        tyre.rotation.z = Math.PI / 2;
+        wheel.add(tyre);
+        var disc = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.32, 10), chromeMat);
+        disc.rotation.z = Math.PI / 2;
+        wheel.add(disc);
+        g.add(wheel);
+        wheels.push(wheel);
+      }
+    }
+
+    // выхлоп вместо печного огня — те же поля, что у печки
+    var fire = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.18),
+      new THREE.MeshBasicMaterial({ color: 0xff8a24 }));
+    fire.position.set(0.62, 0.5, -2.4);
+    fire.visible = false;
+    g.add(fire);
+    var fireGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: World.glowTexture(255, 190, 120), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.5
+    }));
+    fireGlow.scale.set(0.8, 0.8, 1);
+    fireGlow.position.set(0.62, 0.5, -2.5);
+    g.add(fireGlow);
+
+    var lbl = null;
+    if (label) {
+      lbl = World.labelSprite(label, '#' + new THREE.Color(color).getHexString());
+      lbl.position.set(0, 3.2, 0);
+      g.add(lbl);
+    }
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 5.6),
+      new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.05;
+    g.add(shadow);
+
+    g.userData = {
+      isCar: true, wheels: wheels, fire: fire, fireGlow: fireGlow, label: lbl,
+      body: body, stripe: null, blob: shadow, paint: paintMat,
+      pipe: new THREE.Vector3(0.62, 0.6, -2.5), dents: 0
+    };
+    return g;
+  };
+
+  /* Помятая машина: кузов проседает и перекашивается. */
+  World.dentCar = function (mesh, amount) {
+    var u = mesh.userData;
+    u.dents = Math.min(3, (u.dents || 0) + amount);
+    var k = u.dents / 3;
+    u.body.scale.set(1 - k * 0.14, 1 - k * 0.22, 1 + k * 0.1);
+    u.body.rotation.z = (u.dents % 2 ? 1 : -1) * k * 0.16;
+    u.dentDrop = -k * 0.12;
+    if (u.paint) u.paint.color.multiplyScalar(1 - k * 0.12);
+  };
+
+  /* ---------- Тюрьма: двор, ворота, барак и вышка ---------- */
+
+  /* Где стоит тюрьма: ровный участок на дальней половине круга.
+     Считаем одинаково в мире и в игре, чтобы во двор не попали пальмы. */
+  World.jailSpot = function (track) {
+    var best = Infinity, d = track.length * 0.66;
+    for (var u = 0.55; u < 0.95; u += 0.01) {
+      var dd = track.length * u;
+      var score = Math.abs(track.heightAt(dd)) + Math.abs(track.slopeAt(dd)) * 40;
+      if (score < best) { best = score; d = dd; }
+    }
+    return { dist: d, near: 18, far: 46, half: 22 };
+  };
+
+  /* Попадает ли точка (вдоль/поперёк) в тюремный двор. */
+  World.inJailZone = function (track, dist, lane) {
+    var j = World.jailSpot(track);
+    var along = track.norm(dist - j.dist + track.length / 2) - track.length / 2;
+    return Math.abs(along) < j.half + 4 && lane > j.near - 4 && lane < j.far + 4;
+  };
+
+  /* Локальные координаты: X — вдоль трассы, Z — от дороги вглубь двора.
+     Ворота стоят на Z = 0, барак у дальней стены. */
+  World.buildJail = function () {
+    var root = new THREE.Group();
+
+    var wallMat = new THREE.MeshLambertMaterial({ map: World.plasterTexture('#b9b3a6') });
+    var concreteMat = new THREE.MeshLambertMaterial({ color: 0x8d8b86 });
+    var steelMat = new THREE.MeshLambertMaterial({ color: 0x4a4f57 });
+    var barMat = new THREE.MeshLambertMaterial({ color: 0x2a2d33 });
+    var roofMat = new THREE.MeshLambertMaterial({ color: 0x5a5f66 });
+
+    var X = 20, Z = 28, WH = 4.4;
+
+    // двор
+    var yard = new THREE.Mesh(new THREE.PlaneGeometry(X * 2, Z),
+      new THREE.MeshLambertMaterial({ map: World.plainRoadTexture(), color: 0x9c9a94 }));
+    yard.rotation.x = -Math.PI / 2;
+    yard.position.set(0, 0.04, Z / 2);
+    root.add(yard);
+
+    // стены: три сплошные и передняя с проёмом под ворота
+    var walls = [];
+    var back = new THREE.BoxGeometry(X * 2 + 1.2, WH, 0.6);
+    back.translate(0, WH / 2, Z);
+    walls.push(back);
+    for (var s = -1; s <= 1; s += 2) {
+      var side = new THREE.BoxGeometry(0.6, WH, Z);
+      side.translate(s * X, WH / 2, Z / 2);
+      walls.push(side);
+      var front = new THREE.BoxGeometry(X - 4, WH, 0.6);
+      front.translate(s * (X + 4) / 2, WH / 2, 0);
+      walls.push(front);
+    }
+    // столбы ворот
+    for (var g2 = -1; g2 <= 1; g2 += 2) {
+      var post = new THREE.BoxGeometry(1.2, WH + 1.4, 1.2);
+      post.translate(g2 * 4.4, (WH + 1.4) / 2, 0);
+      walls.push(post);
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(walls), wallMat));
+
+    // колючка поверху
+    var wire = [];
+    for (var w = -1; w <= 1; w += 2) {
+      for (var k = 0; k < 3; k++) {
+        var line = new THREE.CylinderGeometry(0.05, 0.05, Z, 5);
+        line.rotateX(Math.PI / 2);
+        line.translate(w * X, WH + 0.4 + k * 0.35, Z / 2);
+        wire.push(line);
+      }
+    }
+    for (var k2 = 0; k2 < 3; k2++) {
+      var lineB = new THREE.CylinderGeometry(0.05, 0.05, X * 2, 5);
+      lineB.rotateZ(Math.PI / 2);
+      lineB.translate(0, WH + 0.4 + k2 * 0.35, Z);
+      wire.push(lineB);
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(wire), steelMat));
+
+    // ворота: две решётчатые створки на петлях
+    var gate = new THREE.Group();
+    root.add(gate);
+    var leaves = [];
+    for (var lf = -1; lf <= 1; lf += 2) {
+      var leaf = new THREE.Group();
+      leaf.position.set(lf * 4, 0, 0);
+      var bars = [];
+      var frameTop = new THREE.BoxGeometry(4, 0.25, 0.25);
+      frameTop.translate(-lf * 2, WH - 0.3, 0);
+      bars.push(frameTop);
+      var frameBottom = new THREE.BoxGeometry(4, 0.25, 0.25);
+      frameBottom.translate(-lf * 2, 0.3, 0);
+      bars.push(frameBottom);
+      for (var b = 0; b < 7; b++) {
+        var bar = new THREE.CylinderGeometry(0.08, 0.08, WH - 0.5, 6);
+        bar.translate(-lf * (0.3 + b * 0.6), WH / 2, 0);
+        bars.push(bar);
+      }
+      leaf.add(new THREE.Mesh(World.mergeGeometries(bars), barMat));
+      gate.add(leaf);
+      leaves.push(leaf);
+    }
+
+    // вывеска над воротами
+    var signTex = canvasTexture(256, 64, function (g, w2, h2) {
+      g.fillStyle = '#2b2f36';
+      g.fillRect(0, 0, w2, h2);
+      g.strokeStyle = '#e8e2d0';
+      g.lineWidth = 3;
+      g.strokeRect(4, 4, w2 - 8, h2 - 8);
+      g.fillStyle = '#e8e2d0';
+      g.font = 'bold 34px system-ui, -apple-system, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('ТЮРЬМА', w2 / 2, h2 / 2 + 2);
+    });
+    var sign = new THREE.Mesh(new THREE.BoxGeometry(9, 2.2, 0.3),
+      [steelMat, steelMat, steelMat, steelMat,
+       new THREE.MeshLambertMaterial({ map: signTex }),
+       new THREE.MeshLambertMaterial({ map: signTex })]);
+    sign.position.set(0, WH + 1.6, 0);
+    root.add(sign);
+
+    // барак с решётками
+    var block = [];
+    var hall = new THREE.BoxGeometry(X * 1.5, 5.2, 7);
+    World.scaleUV(hall, 4, 1);
+    hall.translate(0, 2.6, Z - 5);
+    block.push(hall);
+    root.add(new THREE.Mesh(World.mergeGeometries(block), wallMat));
+    var roof = new THREE.Mesh(new THREE.BoxGeometry(X * 1.5 + 1, 0.5, 8), roofMat);
+    roof.position.set(0, 5.4, Z - 5);
+    root.add(roof);
+
+    var windows = [];
+    for (var i = -3; i <= 3; i++) {
+      var hole = new THREE.BoxGeometry(2, 1.6, 0.3);
+      hole.translate(i * 4, 3, Z - 8.55);
+      windows.push(hole);
+      for (var v = 0; v < 4; v++) {
+        var vbar = new THREE.BoxGeometry(0.1, 1.7, 0.16);
+        vbar.translate(i * 4 - 0.75 + v * 0.5, 3, Z - 8.7);
+        windows.push(vbar);
+      }
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(windows), barMat));
+    var door = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.2, 0.3), barMat);
+    door.position.set(0, 1.6, Z - 8.6);
+    root.add(door);
+
+    // вышка охраны в дальнем углу
+    var tower = [];
+    for (var tx = -1; tx <= 1; tx += 2) {
+      for (var tz = -1; tz <= 1; tz += 2) {
+        var leg = new THREE.CylinderGeometry(0.22, 0.28, 9, 6);
+        leg.translate(X - 4 + tx * 1.4, 4.5, Z - 3 + tz * 1.4);
+        tower.push(leg);
+      }
+    }
+    var cabin = new THREE.BoxGeometry(5, 2.6, 5);
+    cabin.translate(X - 4, 10.3, Z - 3);
+    tower.push(cabin);
+    var capRoof = new THREE.ConeGeometry(4.2, 1.6, 4);
+    capRoof.rotateY(Math.PI / 4);
+    capRoof.translate(X - 4, 12.4, Z - 3);
+    tower.push(capRoof);
+    root.add(new THREE.Mesh(World.mergeGeometries(tower), steelMat));
+
+    // прожектор вышки
+    var lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 0.9, 10),
+      new THREE.MeshBasicMaterial({ color: 0xfff3c0 }));
+    lamp.rotation.z = Math.PI / 2;
+    lamp.position.set(X - 6.4, 10.2, Z - 3);
+    root.add(lamp);
+    var beam = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: World.glowTexture(255, 243, 190), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.5
+    }));
+    beam.scale.set(10, 10, 1);
+    beam.position.copy(lamp.position);
+    root.add(beam);
+
+    // скамейка во дворе
+    var bench = [];
+    var seat = new THREE.BoxGeometry(4, 0.2, 0.9);
+    seat.translate(-X + 7, 0.75, Z - 12);
+    bench.push(seat);
+    for (var bx = -1; bx <= 1; bx += 2) {
+      var legB = new THREE.BoxGeometry(0.25, 0.75, 0.8);
+      legB.translate(-X + 7 + bx * 1.6, 0.38, Z - 12);
+      bench.push(legB);
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(bench), concreteMat));
+
+    root.userData = { gate: gate, leaves: leaves, lamp: beam, halfX: X, depth: Z, wallH: WH };
+    return root;
+  };
+
+  /* Ключ от ворот: золотой, светится и крутится. */
+  World.buildKey = function () {
+    var g = new THREE.Group();
+    var goldMat = new THREE.MeshPhongMaterial({
+      color: 0xf0c23c, emissive: 0x6a4a05, specular: 0xfff4c8, shininess: 90
+    });
+    var parts = [];
+    var ring = new THREE.TorusGeometry(0.34, 0.1, 8, 16);
+    ring.translate(0, 0, 0);
+    parts.push(ring);
+    var shaft = new THREE.CylinderGeometry(0.09, 0.09, 1.1, 8);
+    shaft.rotateZ(Math.PI / 2);
+    shaft.translate(0.85, 0, 0);
+    parts.push(shaft);
+    for (var t = 0; t < 2; t++) {
+      var tooth = new THREE.BoxGeometry(0.12, 0.34, 0.12);
+      tooth.translate(1.15 + t * 0.28, -0.2, 0);
+      parts.push(tooth);
+    }
+    g.add(new THREE.Mesh(World.mergeGeometries(parts), goldMat));
+
+    var glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: World.glowTexture(255, 226, 130), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.8
+    }));
+    glow.scale.set(3.4, 3.4, 1);
+    g.add(glow);
+    g.userData.glow = glow;
+    return g;
   };
 
   global.World = World;
