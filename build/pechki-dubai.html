@@ -362,7 +362,7 @@
       <button id="adm-heli">Вертолёт</button>
     </div>
     <div class="arow">
-      <button id="adm-camel">Верблюд сюда</button>
+      <button id="adm-camel">Зверя сюда</button>
       <button id="adm-police">Полицию сюда</button>
     </div>
     <div class="arow">
@@ -1109,6 +1109,65 @@
     o.stop(t + 1.2);
   };
 
+  /* Рёв зверя: у каждого свой голос. */
+  Sfx.prototype.beastRoar = function (kind, vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    if (kind === 'snail') { this.footstep(vol * 0.8); return; }   // улитка молчит
+    var t = this.ctx.currentTime;
+    var base = kind === 'elk' ? 120 : (kind === 'dragon' ? 70 : 150);
+    var dur = kind === 'dragon' ? 1.6 : 1.1;
+    var o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.linearRampToValueAtTime(base * 0.62, t + dur * 0.5);
+    o.frequency.linearRampToValueAtTime(base * 0.85, t + dur * 0.85);
+    var f = this.ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = kind === 'dragon' ? 600 : 900;
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.22 * vol, t + 0.12);
+    g.gain.setValueAtTime(0.22 * vol, t + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(f).connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + dur + 0.1);
+    if (kind === 'dragon') this.noise(dur, 0.12 * vol, 700);
+  };
+
+  /* Атака зверя: плевок, удар рогами, струя огня или шлепок слизи. */
+  Sfx.prototype.beastAttack = function (kind, vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    if (kind === 'camel') { this.camelSpit(vol); return; }
+    if (kind === 'elk') {
+      this.thud();
+      var s = this;
+      setTimeout(function () { s.beastRoar('elk', vol); }, 120);
+      return;
+    }
+    if (kind === 'dragon') {
+      // струя огня: длинный шум с падающим фильтром
+      this.noise(1.1, 0.3 * vol, 1400);
+      var t = this.ctx.currentTime;
+      var o = this.ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(220, t);
+      o.frequency.exponentialRampToValueAtTime(60, t + 1.0);
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.16 * vol, t + 0.1);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 1.2);
+      return;
+    }
+    this.splat(vol);                                   // улитка: шлепок слизи
+  };
+
+
   /* Шаги пешком: два глухих шлепка. */
   Sfx.prototype.footstep = function (vol) {
     this.init();
@@ -1584,6 +1643,27 @@
         g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
       }
     }, 3, 3);
+  };
+
+  /* Штукатурка: белёная стена с лёгкими потёками — для соборов и арок. */
+  World.plasterTexture = function (color) {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = color || '#f0e9db';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 900; i++) {
+        g.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.25)' : 'rgba(150,140,120,0.16)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      }
+      for (var k = 0; k < 12; k++) {
+        g.strokeStyle = 'rgba(140,130,110,0.14)';
+        g.lineWidth = 1 + Math.random() * 2;
+        g.beginPath();
+        var xx = Math.random() * w;
+        g.moveTo(xx, 0);
+        g.lineTo(xx + (Math.random() - 0.5) * 20, h);
+        g.stroke();
+      }
+    }, 2, 2);
   };
 
   World.brickTexture = function (color) {
@@ -2404,6 +2484,7 @@
       heights: [26, 190], capColor: 0x8d9aa6,
       trees: 'palm', treeCount: 96, dunes: true, cacti: true,
       weather: ['sand', 'rain'],
+      people: 'dubai', beast: 'camel',
       landmarks: 'dubai'
     },
     moscow: {
@@ -2418,6 +2499,7 @@
       heights: [22, 90], capColor: 0x9aa3ad,
       trees: 'birch', treeCount: 90, spruces: true, dunes: false,
       weather: ['snow', 'rain'],
+      people: 'moscow', beast: 'elk',
       landmarks: 'moscow'
     },
     yoshkar: {
@@ -2428,10 +2510,12 @@
             [0.74,'#dfe4e6'],[0.88,'#efe6d8'],[1.00,'#f2e6d0']],
       haze: 'rgba(224,228,232,', clouds: 150, cloudAlpha: 0.26,
       fog: 0xd2d8e0, clear: 0xbfcedb, fogDensity: 0.0017,
-      facades: ['brick', 'panel', 'stalin', 'white'],
-      heights: [16, 46], capColor: 0xa8b0b8,
+      facades: ['brick', 'haussmann', 'white', 'stripe'],
+      facadeTints: [0xffffff, 0xe8c07a, 0xc98a6a, 0x9fbcd4],
+      heights: [11, 17], capColor: 0x8f3a2e, roofs: 'gable',
       trees: 'spruce', treeCount: 86, dunes: false,
       weather: ['snow', 'rain'],
+      people: 'mari', beast: 'elk',
       landmarks: 'yoshkar'
     },
     tokyo: {
@@ -2446,6 +2530,7 @@
       heights: [24, 170], capColor: 0x7f858f,
       trees: 'sakura', treeCount: 92, dunes: false,
       weather: ['rain', 'rain', 'sand'],
+      people: 'tokyo', beast: 'dragon',
       landmarks: 'tokyo'
     },
     paris: {
@@ -2460,6 +2545,7 @@
       heights: [18, 52], capColor: 0x6c7079,
       trees: 'plane', treeCount: 94, dunes: false,
       weather: ['rain', 'rain', 'snow'],
+      people: 'paris', beast: 'snail',
       landmarks: 'paris'
     }
   };
@@ -2469,6 +2555,7 @@
   World.buildCity = function (track, scene, theme) {
     theme = theme || World.THEMES.dubai;
     World.theme = theme;
+    World.ferrisWheels = [];
     var group = new THREE.Group();
     scene.add(group);
 
@@ -2511,6 +2598,21 @@
     }
     World._distanceToRoad = distanceToRoad;
 
+    // Где будут достопримечательности: считаем заранее, чтобы дома их обошли
+    function spotAt(u, off) {
+      var d = track.length * u;
+      var p = track.pointAt(d);
+      var n = track.sideAt(d);
+      var v = new THREE.Vector3(p.x, 0, p.z).addScaledVector(n, off);
+      return { x: v.x, z: v.z, face: Math.atan2(-n.x * Math.sign(off), -n.z * Math.sign(off)) };
+    }
+    var A = spotAt(0, -82);        // у самого финиша
+    var B = spotAt(0.52, 105);     // дальняя сторона круга
+    var C = spotAt(0.26, -96);
+    var D = spotAt(0.76, 92);
+    var E = spotAt(0.40, 88);
+    var reserved = [[A, 105], [B, 95], [C, 70], [D, 70], [E, 60]];
+
     // Небоскрёбы: четыре «квартала» с общими материалами, внутри квартала всё склеено
     var BUCKETS = 4;
     var buckets = [], capGeos = [];
@@ -2526,16 +2628,16 @@
       var z = center.z + Math.sin(ang) * rad;
       var near = distanceToRoad(x, z);
       if (near < track.width / 2 + 34) continue;    // за насыпью, иначе дом окажется в склоне
-      var fin0 = track.pointAt(0), fs0 = track.sideAt(0);
-      var bjx = fin0.x + fs0.x * -82, bjz = fin0.z + fs0.z * -82;
-      if ((x - bjx) * (x - bjx) + (z - bjz) * (z - bjz) < 105 * 105) continue;   // площадь башни
-      var pdd = track.length * 0.52;
-      var ppp = track.pointAt(pdd), pnn = track.sideAt(pdd);
-      var plx = ppp.x + pnn.x * 105, plz = ppp.z + pnn.z * 105;
-      if ((x - plx) * (x - plx) + (z - plz) * (z - plz) < 95 * 95) continue;      // двор дворца
+      var busy = false;
+      for (var rz = 0; rz < reserved.length; rz++) {
+        var sp = reserved[rz][0], rr2 = reserved[rz][1];
+        if ((x - sp.x) * (x - sp.x) + (z - sp.z) * (z - sp.z) < rr2 * rr2) { busy = true; break; }
+      }
+      if (busy) continue;                                 // тут стоит достопримечательность
 
       var hmin = theme.heights[0], hspan = theme.heights[1];
-      var h = hmin + Math.random() * Math.random() * hspan + (near < 90 ? 0 : hmin * 0.6);
+      var h = hmin + Math.random() * Math.random() * hspan +
+        (theme.roofs === 'gable' || near < 90 ? 0 : hmin * 0.6);
       var bw = 12 + Math.random() * 24;
       var bd = 12 + Math.random() * 24;
 
@@ -2548,7 +2650,22 @@
       geo.applyMatrix4(m);
       buckets[placed % BUCKETS].push(geo);
 
-      if (Math.random() > 0.55) {
+      if (theme.roofs === 'gable') {
+        // малоэтажный город: черепичная крыша шатром и печная труба
+        var rh = 3 + Math.random() * 3.5;
+        var roof = new THREE.ConeGeometry(1, rh, 4);
+        roof.rotateY(Math.PI / 4);
+        roof.applyMatrix4(new THREE.Matrix4().makeScale(bw * 0.82, 1, bd * 0.82));
+        roof.translate(0, h / 2 + rh / 2, 0);
+        roof.applyMatrix4(m);                    // тот же разворот, что и у дома
+        capGeos.push(roof);
+        if (Math.random() > 0.5) {
+          var chim = new THREE.BoxGeometry(1.1, 3.4, 1.1);
+          chim.translate(x + (Math.random() - 0.5) * bw * 0.35, h + rh * 0.4,
+                         z + (Math.random() - 0.5) * bd * 0.35);
+          capGeos.push(chim);
+        }
+      } else if (Math.random() > 0.55) {
         var ch = 6 + Math.random() * 18;
         var cap = new THREE.BoxGeometry(bw * 0.4, ch, bd * 0.4);
         cap.translate(x, h + ch / 2, z);
@@ -2569,10 +2686,13 @@
       // стеклянные фасады бликуют на солнце, каменные — нет
       var st = STYLES[b2 % STYLES.length];
       var glassy = st === 'glass' || st === 'neon' || st === 'stripe' || st === 'white';
+      // в малоэтажных городах дома подкрашены, как на набережной Брюгге
+      var tint = theme.facadeTints ? theme.facadeTints[b2 % theme.facadeTints.length] : 0xffffff;
       var mat = glassy
         ? new THREE.MeshPhongMaterial({ map: tex, emissiveMap: tex, emissive: 0x1a1712,
-            specular: 0x6a7c8c, shininess: 42 })
-        : new THREE.MeshLambertMaterial({ map: tex, emissiveMap: tex, emissive: 0x141210 });
+            specular: 0x6a7c8c, shininess: 42, color: tint })
+        : new THREE.MeshLambertMaterial({ map: tex, emissiveMap: tex, emissive: 0x141210,
+            color: tint });
       group.add(new THREE.Mesh(World.mergeGeometries(buckets[b2]), mat));
     }
     if (capGeos.length) {
@@ -2580,32 +2700,32 @@
         new THREE.MeshLambertMaterial({ color: theme.capColor })));
     }
 
-    // Достопримечательности: одна у финиша, одна на дальней стороне круга
-    var fin = track.pointAt(0);
-    var fside = track.sideAt(0);
-    var spotA = new THREE.Vector3(fin.x, 0, fin.z).addScaledVector(fside, -82);
-    var pd = track.length * 0.52;
-    var pp2 = track.pointAt(pd);
-    var pn = track.sideAt(pd);
-    var spotB = new THREE.Vector3(pp2.x, 0, pp2.z).addScaledVector(pn, 105);
-    var faceB = Math.atan2(-pn.x, -pn.z);
-    World.burjPosition = spotA.clone();
+    // Достопримечательности: у каждого города свои
+    World.burjPosition = new THREE.Vector3(A.x, 0, A.z);
 
     if (theme.landmarks === 'dubai') {
-      World.buildBurj(group, spotA.x, spotA.z);
-      World.buildPalace(group, spotB.x, spotB.z, faceB);
+      World.buildBurj(group, A.x, A.z);
+      World.buildPalace(group, B.x, B.z, B.face);
     } else if (theme.landmarks === 'moscow') {
-      World.buildKremlin(group, spotA.x, spotA.z, Math.atan2(fside.x, fside.z));
-      World.buildPalace(group, spotB.x, spotB.z, faceB);        // усадьба вдалеке
+      World.buildKremlin(group, A.x, A.z, A.face);
+      World.buildCathedral(group, B.x, B.z, B.face, 'basil');
+      World.buildPalace(group, D.x, D.z, D.face);              // усадьба вдалеке
     } else if (theme.landmarks === 'yoshkar') {
-      World.buildFlemishRow(group, spotA.x, spotA.z, Math.atan2(fside.x, fside.z));
-      World.buildKremlin(group, spotB.x, spotB.z, faceB);
+      // Йошкар-Ола: набережная Брюгге, Царевококшайский кремль,
+      // Благовещенский собор и колесо обозрения
+      World.buildFlemishRow(group, A.x, A.z, A.face);
+      World.buildKremlin(group, B.x, B.z, B.face);
+      World.buildCathedral(group, C.x, C.z, C.face, 'blue');
+      World.buildFerrisWheel(group, D.x, D.z, D.face);
+      World.buildFlemishRow(group, E.x, E.z, E.face);           // вторая набережная
     } else if (theme.landmarks === 'tokyo') {
-      World.buildTokyoTower(group, spotA.x, spotA.z);
-      World.buildFlemishRow(group, spotB.x, spotB.z, faceB);    // квартал у башни
+      World.buildTokyoTower(group, A.x, A.z);
+      World.buildPagoda(group, B.x, B.z, B.face);
+      World.buildFlemishRow(group, D.x, D.z, D.face);           // квартал у башни
     } else if (theme.landmarks === 'paris') {
-      World.buildEiffel(group, spotA.x, spotA.z);
-      World.buildFlemishRow(group, spotB.x, spotB.z, faceB);
+      World.buildEiffel(group, A.x, A.z);
+      World.buildArc(group, B.x, B.z, B.face);
+      World.buildFlemishRow(group, D.x, D.z, D.face);
     }
 
     // Пальмы вдоль трассы: стоят на песке за насыпью, поэтому отступ зависит
@@ -5099,107 +5219,247 @@
 
   /* ---------- Пешеходы ---------- */
 
-  /* Цвета пешеходов сложены в одну палитру-текстуру: тогда вся фигурка
-     склеивается в пару сеток и не съедает draw call'ы. */
-  var PED_COLORS = [
-    '#e9bd97', '#cd935f', '#8d5a3b',                                  // 0..2 кожа
-    '#241d16', '#6b4b2a', '#c9b287', '#8d8d8d',                       // 3..6 волосы
-    '#e14b4b', '#3f7fd8', '#39b06a', '#f0c23c', '#8a5cc4', '#eae6de', // 7..12 верх
-    '#2c3550', '#42506b', '#6b5f4a', '#22242a',                       // 13..16 низ
-    '#f6f4ee', '#e2ded2', '#1a1a1e', '#c9433c', '#2f6f5a'             // 17..21 роба, обувь, сумка
+  /* Вся одежда пешеходов лежит в одной текстуре-палитре 8×8 клеток:
+     клетка либо залита цветом, либо расписана узором (тельняшка, марийская
+     вышивка, кимоно). Тогда фигурка склеивается в три сетки и почти
+     не стоит draw call'ов. */
+  var PED_CELL = 32, PED_GRID = 8;
+  var PED_CELLS = [
+    // 0..7 — кожа, волосы, обувь
+    { fill: '#e9bd97' }, { fill: '#cd935f' }, { fill: '#8d5a3b' },
+    { fill: '#241d16' }, { fill: '#6b4b2a' }, { fill: '#c9b287' }, { fill: '#8d8d8d' },
+    { fill: '#1a1a1e' },
+    // 8..15 — обычная городская одежда
+    { fill: '#e14b4b' }, { fill: '#3f7fd8' }, { fill: '#39b06a' }, { fill: '#f0c23c' },
+    { fill: '#8a5cc4' }, { fill: '#eae6de' }, { fill: '#2c3550' }, { fill: '#6b5f4a' },
+    // 16..23 — национальное
+    { fill: '#f6f4ee' },                                       // 16 кандура, марийский лён
+    { fill: '#17171c' },                                       // 17 абайя
+    { pattern: 'stripes', a: '#f2f4f8', b: '#1d3566' },        // 18 тельняшка
+    { pattern: 'embroidery', a: '#f7f3e7', b: '#c0392b' },     // 19 марийская вышивка
+    { pattern: 'floral', a: '#243a72', b: '#dfe6f5' },         // 20 кимоно индиго
+    { pattern: 'floral', a: '#c9718f', b: '#fff0f4' },         // 21 кимоно розовое
+    { pattern: 'dots', a: '#b3242a', b: '#f4e9d8' },           // 22 русский платок
+    { fill: '#6a4a30' },                                       // 23 шуба и шапка-ушанка
+    // 24..31 — мелочи
+    { fill: '#c9433c' }, { fill: '#2f6f5a' }, { fill: '#d8c07a' }, { fill: '#3a2f26' },
+    { fill: '#9b1f2a' }, { fill: '#f0e4c8' }, { fill: '#2b2b30' }, { fill: '#d8d4c8' }
   ];
+
   var PED_PALETTE = null;
   function pedPalette() {
     if (PED_PALETTE) return PED_PALETTE;
+    var size = PED_CELL * PED_GRID;
     var c = document.createElement('canvas');
-    c.width = 32; c.height = 1;
+    c.width = size; c.height = size;
     var g = c.getContext('2d');
-    for (var i = 0; i < 32; i++) {
-      g.fillStyle = PED_COLORS[i] || '#888888';
-      g.fillRect(i, 0, 1, 1);
+    g.fillStyle = '#888888';
+    g.fillRect(0, 0, size, size);
+    for (var i = 0; i < PED_CELLS.length; i++) {
+      var cell = PED_CELLS[i];
+      var x = (i % PED_GRID) * PED_CELL, y = Math.floor(i / PED_GRID) * PED_CELL;
+      g.save();
+      g.beginPath();
+      g.rect(x, y, PED_CELL, PED_CELL);
+      g.clip();
+      g.fillStyle = cell.fill || cell.a;
+      g.fillRect(x, y, PED_CELL, PED_CELL);
+      if (cell.pattern === 'stripes') {
+        g.fillStyle = cell.b;
+        for (var s = 0; s < PED_CELL; s += 8) g.fillRect(x, y + s, PED_CELL, 4);
+      } else if (cell.pattern === 'embroidery') {
+        g.fillStyle = cell.b;
+        g.fillRect(x, y + 4, PED_CELL, 3);
+        g.fillRect(x, y + PED_CELL - 8, PED_CELL, 3);
+        for (var e = 0; e < PED_CELL; e += 6) {      // ромбики марийского узора
+          g.beginPath();
+          g.moveTo(x + e + 3, y + 12); g.lineTo(x + e + 6, y + 16);
+          g.lineTo(x + e + 3, y + 20); g.lineTo(x + e, y + 16);
+          g.closePath(); g.fill();
+        }
+      } else if (cell.pattern === 'floral') {
+        g.fillStyle = cell.b;
+        for (var f = 0; f < 9; f++) {
+          var fx = x + 4 + (f % 3) * 11 + (Math.floor(f / 3) % 2) * 4;
+          var fy = y + 5 + Math.floor(f / 3) * 10;
+          for (var pt = 0; pt < 5; pt++) {           // цветок из пяти лепестков
+            var a = pt * Math.PI * 0.4;
+            g.beginPath();
+            g.arc(fx + Math.cos(a) * 2.4, fy + Math.sin(a) * 2.4, 1.7, 0, Math.PI * 2);
+            g.fill();
+          }
+        }
+      } else if (cell.pattern === 'dots') {
+        g.fillStyle = cell.b;
+        for (var d = 0; d < 16; d++) {
+          g.beginPath();
+          g.arc(x + 4 + (d % 4) * 8, y + 4 + Math.floor(d / 4) * 8, 2.2, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      g.restore();
     }
     PED_PALETTE = new THREE.CanvasTexture(c);
-    PED_PALETTE.magFilter = THREE.NearestFilter;
-    PED_PALETTE.minFilter = THREE.NearestFilter;
     PED_PALETTE.generateMipmaps = false;
+    PED_PALETTE.minFilter = THREE.LinearFilter;
+    PED_PALETTE.magFilter = THREE.LinearFilter;
     PED_PALETTE.encoding = THREE.sRGBEncoding;
     return PED_PALETTE;
   }
 
-  /* Красим геометрию «цветом номер i», перекидывая все её UV в один пиксель палитры. */
+  /* Красим геометрию «клеткой номер i»: все её UV сводим в центр клетки. */
   function paint(geo, i) {
     var uv = geo.attributes.uv;
-    var u = (i + 0.5) / 32;
-    for (var k = 0; k < uv.count; k++) uv.setXY(k, u, 0.5);
+    var cx = ((i % PED_GRID) + 0.5) / PED_GRID;
+    var cy = 1 - (Math.floor(i / PED_GRID) + 0.5) / PED_GRID;
+    for (var k = 0; k < uv.count; k++) uv.setXY(k, cx, cy);
+    uv.needsUpdate = true;
+    return geo;
+  }
+
+  /* То же, но с узором: родные UV раскладываем внутри клетки, чтобы
+     полоски и вышивка легли по ткани. */
+  function paintPattern(geo, i, rx, ry) {
+    var uv = geo.attributes.uv;
+    var col = i % PED_GRID, row = Math.floor(i / PED_GRID);
+    var pad = 0.5 / (PED_CELL * PED_GRID);
+    for (var k = 0; k < uv.count; k++) {
+      var u = ((uv.getX(k) * (rx || 1)) % 1 + 1) % 1;
+      var v = ((uv.getY(k) * (ry || 1)) % 1 + 1) % 1;
+      uv.setXY(k,
+        (col + pad + u * (1 - 2 * pad)) / PED_GRID,
+        1 - (row + pad + (1 - v) * (1 - 2 * pad)) / PED_GRID);
+    }
     uv.needsUpdate = true;
     return geo;
   }
 
   function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
 
-  /* Человек на тротуаре: горожанин, дама в юбке или араб в кандуре.
+  /* Пешеход в национальном костюме своего города.
+     style: dubai | moscow | mari | tokyo | paris (или city — обычный горожанин).
      Ноги — отдельные сетки, чтобы шагали. */
-  World.buildPedestrian = function (kind) {
+  World.buildPedestrian = function (style, kind) {
+    style = style || (World.theme && World.theme.people) || 'city';
+    kind = kind || (Math.random() < 0.5 ? 'man' : 'woman');
     var g = new THREE.Group();
     var mat = new THREE.MeshLambertMaterial({ map: pedPalette() });
-    kind = kind || pick(['man', 'woman', 'thobe', 'man', 'woman']);
-
     var skin = pick([0, 0, 1, 1, 2]);
-    var hair = pick([3, 3, 4, 5, 6]);
-    var shirt = pick([7, 8, 9, 10, 11, 12]);
-    var pants = pick([13, 14, 15, 16]);
-    var tall = 0.92 + Math.random() * 0.16;
-    if (kind === 'thobe') { shirt = 17; pants = 17; }
+    var hair = pick([3, 3, 4, 5]);
+    var body = [];
 
-    // ноги: две отдельные сетки с осью вращения в бедре
+    // что на человеке: верх, низ, штанина, обувь и головной убор
+    var top = pick([8, 9, 10, 11, 12, 13]);
+    var bottom = pick([14, 15, 30]);
+    var legColor = bottom;
+    var shoe = 7;
+    var robe = 0;                 // длинная одежда: 0 — нет
+    var pattern = 0;              // узорная клетка для верха
+
+    if (style === 'dubai') {
+      if (kind === 'man') { robe = 16; top = 16; }
+      else { robe = 17; top = 17; }
+      legColor = robe;
+      shoe = robe === 17 ? 7 : 29;
+    } else if (style === 'moscow') {
+      top = pick([23, 14, 30, 24]);            // шубы и пальто
+      bottom = pick([14, 30, 27]);
+      legColor = bottom;
+      shoe = 7;
+    } else if (style === 'mari') {
+      robe = 19; top = 19; pattern = 19;       // белый лён с красной вышивкой
+      legColor = kind === 'man' ? 30 : 19;
+      shoe = 27;
+    } else if (style === 'tokyo') {
+      robe = kind === 'woman' ? pick([21, 20]) : 20;
+      top = robe; pattern = robe;
+      legColor = robe;
+      shoe = 27;
+    } else if (style === 'paris') {
+      top = 18; pattern = 18;                  // тельняшка
+      bottom = pick([14, 30, 27]);
+      legColor = bottom;
+      shoe = 7;
+    }
+
+    // --- ноги: две отдельные сетки с осью в бедре
     var legs = [];
+    var barelegs = (kind === 'woman' && style === 'city' && Math.random() < 0.5);
     for (var s = -1; s <= 1; s += 2) {
       var lg = new THREE.Group();
       lg.position.set(s * 0.13, 0.82, 0);
       var parts = [];
       var shin = new THREE.CylinderGeometry(0.075, 0.065, 0.8, 7);
       shin.translate(0, -0.4, 0);
-      parts.push(paint(shin, kind === 'woman' && Math.random() < 0.5 ? skin : pants));
-      var shoe = new THREE.BoxGeometry(0.15, 0.1, 0.28);
-      shoe.translate(0, -0.83, 0.05);
-      parts.push(paint(shoe, 19));
+      parts.push(paint(shin, barelegs ? skin : legColor));
+      var shoeGeo = new THREE.BoxGeometry(0.15, 0.1, 0.28);
+      shoeGeo.translate(0, -0.83, 0.05);
+      parts.push(paint(shoeGeo, shoe));
+      if (style === 'tokyo') {                  // гэта: деревянная подошва на зубьях
+        var soleA = new THREE.BoxGeometry(0.16, 0.06, 0.3);
+        soleA.translate(0, -0.91, 0.05);
+        parts.push(paint(soleA, 26));
+      }
       var leg = new THREE.Mesh(World.mergeGeometries(parts), mat);
       lg.add(leg);
       g.add(lg);
       legs.push(lg);
     }
 
-    // корпус, руки и голова — одной сеткой
-    var body = [];
-    if (kind === 'woman') {
+    // --- длинная одежда или юбка
+    if (robe) {
+      var rl = style === 'dubai' ? 1.16 : (style === 'tokyo' ? 1.0 : 0.92);
+      var gown = new THREE.CylinderGeometry(0.2, style === 'dubai' ? 0.36 : 0.3, rl, 14);
+      gown.translate(0, 0.62 + rl / 2 - 0.5, 0);
+      body.push(pattern ? paintPattern(gown, pattern, 2, 2) : paint(gown, robe));
+    } else if (kind === 'woman') {
       var skirt = new THREE.CylinderGeometry(0.19, 0.3, 0.5, 12);
       skirt.translate(0, 0.86, 0);
-      body.push(paint(skirt, pants));
-    } else if (kind === 'thobe') {
-      var robe = new THREE.CylinderGeometry(0.2, 0.34, 1.12, 12);
-      robe.translate(0, 0.62, 0);
-      body.push(paint(robe, 17));
+      body.push(paint(skirt, bottom));
     }
+
+    // --- корпус
     var torso = new THREE.CylinderGeometry(0.19, 0.21, 0.5, 12);
     torso.translate(0, 1.12, 0);
-    body.push(paint(torso, shirt));
+    body.push(pattern ? paintPattern(torso, pattern, 2, 1) : paint(torso, top));
     var shoulders = new THREE.SphereGeometry(0.2, 12, 8);
     var msh = new THREE.Matrix4().makeScale(1.1, 0.6, 0.9);
     msh.setPosition(0, 1.35, 0);
     shoulders.applyMatrix4(msh);
-    body.push(paint(shoulders, shirt));
+    body.push(pattern ? paintPattern(shoulders, pattern, 2, 1) : paint(shoulders, top));
 
+    // --- руки
     for (var ax = -1; ax <= 1; ax += 2) {
       var arm = new THREE.CylinderGeometry(0.055, 0.05, 0.56, 7);
       var ma = new THREE.Matrix4().makeRotationZ(ax * 0.12);
       ma.setPosition(ax * 0.24, 1.06, 0);
       arm.applyMatrix4(ma);
-      body.push(paint(arm, kind === 'thobe' ? 17 : shirt));
+      body.push(pattern ? paintPattern(arm, pattern, 1, 1) : paint(arm, robe || top));
       var hand = new THREE.SphereGeometry(0.06, 8, 6);
       hand.translate(ax * 0.28, 0.78, 0);
       body.push(paint(hand, skin));
     }
 
+    // --- пояс: японский оби, марийский кушак, арабский поясок
+    if (style === 'tokyo') {
+      var obi = new THREE.CylinderGeometry(0.215, 0.215, 0.22, 14);
+      obi.translate(0, 1.0, 0);
+      body.push(paint(obi, kind === 'woman' ? 24 : 26));
+      var bow = new THREE.BoxGeometry(0.2, 0.18, 0.14);
+      bow.translate(0, 1.0, -0.22);
+      body.push(paint(bow, kind === 'woman' ? 24 : 26));
+    } else if (style === 'mari') {
+      var sash = new THREE.CylinderGeometry(0.215, 0.215, 0.14, 14);
+      sash.translate(0, 1.0, 0);
+      body.push(paint(sash, 28));
+      for (var tz = -1; tz <= 1; tz += 2) {      // подвески-монетки на поясе
+        var tass = new THREE.BoxGeometry(0.05, 0.22, 0.05);
+        tass.translate(tz * 0.1, 0.86, 0.2);
+        body.push(paint(tass, 26));
+      }
+    }
+
+    // --- шея и голова
     var neck = new THREE.CylinderGeometry(0.06, 0.07, 0.1, 8);
     neck.translate(0, 1.45, 0);
     body.push(paint(neck, skin));
@@ -5214,40 +5474,124 @@
     nose.applyMatrix4(mn);
     body.push(paint(nose, skin));
 
-    if (kind === 'thobe') {
-      // гутра: белый платок и чёрный обруч
+    // --- головной убор по стране
+    var cap = new THREE.SphereGeometry(0.132, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
+    cap.translate(0, 1.585, 0);
+
+    if (style === 'dubai' && kind === 'man') {
+      // гутра и чёрный обруч-игаль
       var cloth = new THREE.SphereGeometry(0.145, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
       cloth.translate(0, 1.585, 0);
-      body.push(paint(cloth, 18));
-      var back = new THREE.BoxGeometry(0.24, 0.3, 0.1);
-      back.translate(0, 1.46, -0.11);
-      body.push(paint(back, 18));
+      body.push(paint(cloth, 16));
+      var back = new THREE.BoxGeometry(0.24, 0.32, 0.1);
+      back.translate(0, 1.44, -0.11);
+      body.push(paint(back, 16));
       var ring = new THREE.TorusGeometry(0.13, 0.022, 6, 14);
       var mr = new THREE.Matrix4().makeRotationX(Math.PI / 2);
-      mr.setPosition(0, 1.64, 0);
+      mr.setPosition(0, 1.645, 0);
       ring.applyMatrix4(mr);
-      body.push(paint(ring, 19));
-    } else {
-      var cap = new THREE.SphereGeometry(0.132, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
-      cap.translate(0, 1.585, 0);
+      body.push(paint(ring, 7));
+    } else if (style === 'dubai') {
+      // хиджаб: платок закрывает волосы и плечи
+      var hij = new THREE.SphereGeometry(0.15, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.65);
+      hij.translate(0, 1.585, 0);
+      body.push(paint(hij, 17));
+      var drape = new THREE.CylinderGeometry(0.16, 0.24, 0.36, 12);
+      drape.translate(0, 1.34, -0.02);
+      body.push(paint(drape, 17));
+    } else if (style === 'moscow' && kind === 'man') {
+      // шапка-ушанка
+      var ush = new THREE.SphereGeometry(0.15, 12, 9, 0, Math.PI * 2, 0, Math.PI * 0.6);
+      ush.translate(0, 1.6, 0);
+      body.push(paint(ush, 23));
+      for (var ex = -1; ex <= 1; ex += 2) {
+        var ear = new THREE.BoxGeometry(0.07, 0.16, 0.13);
+        ear.translate(ex * 0.145, 1.55, 0);
+        body.push(paint(ear, 23));
+      }
+    } else if (style === 'moscow') {
+      // пуховый платок
+      var pl = new THREE.SphereGeometry(0.155, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
+      pl.translate(0, 1.585, 0);
+      body.push(paintPattern(pl, 22, 2, 2));
+      var knot = new THREE.SphereGeometry(0.075, 8, 6);
+      knot.translate(0, 1.44, 0.09);
+      body.push(paintPattern(knot, 22, 1, 1));
+      var collar = new THREE.CylinderGeometry(0.21, 0.26, 0.16, 12);
+      collar.translate(0, 1.38, 0);
+      body.push(paint(collar, 23));
+    } else if (style === 'mari') {
+      if (kind === 'woman') {
+        // шымакш: конусная шапочка с вышитым полотном на спине
+        var cone = new THREE.ConeGeometry(0.11, 0.26, 10);
+        var mc = new THREE.Matrix4().makeRotationX(-0.35);
+        mc.setPosition(0, 1.74, -0.02);
+        cone.applyMatrix4(mc);
+        body.push(paintPattern(cone, 19, 1, 1));
+        var tail = new THREE.BoxGeometry(0.14, 0.34, 0.06);
+        tail.translate(0, 1.5, -0.13);
+        body.push(paintPattern(tail, 19, 1, 2));
+      } else {
+        body.push(paint(cap, 16));               // белая холщовая шапочка
+        var brim = new THREE.CylinderGeometry(0.175, 0.175, 0.03, 14);
+        brim.translate(0, 1.63, 0);
+        body.push(paint(brim, 16));
+      }
+    } else if (style === 'tokyo') {
+      if (kind === 'woman') {
+        var bun = new THREE.SphereGeometry(0.1, 10, 8);       // причёска с пучком
+        bun.translate(0, 1.63, -0.11);
+        body.push(paint(bun, 3));
+        body.push(paint(cap, 3));
+        var pin = new THREE.CylinderGeometry(0.012, 0.012, 0.22, 6);
+        var mpn = new THREE.Matrix4().makeRotationZ(1.0);
+        mpn.setPosition(0.02, 1.66, -0.09);
+        pin.applyMatrix4(mpn);
+        body.push(paint(pin, 26));
+      } else {
+        body.push(paint(cap, 3));
+      }
+    } else if (style === 'paris') {
       body.push(paint(cap, hair));
-      if (kind === 'woman') {                     // длинные волосы по спине
+      var beret = new THREE.SphereGeometry(0.155, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.42);
+      var mbe = new THREE.Matrix4().makeScale(1, 0.6, 1);
+      mbe.setPosition(0.02, 1.63, -0.01);
+      beret.applyMatrix4(mbe);
+      body.push(paint(beret, pick([7, 24, 30])));
+      var scarf = new THREE.TorusGeometry(0.115, 0.045, 6, 12);
+      var msc = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+      msc.setPosition(0, 1.42, 0);
+      scarf.applyMatrix4(msc);
+      body.push(paint(scarf, pick([24, 9, 28])));
+    } else {
+      body.push(paint(cap, hair));
+      if (kind === 'woman') {
         var mane = new THREE.BoxGeometry(0.2, 0.34, 0.11);
         mane.translate(0, 1.44, -0.1);
         body.push(paint(mane, hair));
       }
     }
 
-    if (Math.random() < 0.45) {                   // сумка через плечо
+    // сумка через плечо — у всех, кроме арабов в кандуре
+    if (style !== 'dubai' && Math.random() < 0.45) {
       var bag = new THREE.BoxGeometry(0.22, 0.24, 0.1);
       bag.translate(0.24, 0.95, 0.05);
-      body.push(paint(bag, pick([20, 21, 13])));
+      body.push(paint(bag, pick([24, 25, 14])));
+    }
+    // француз с багетом
+    if (style === 'paris' && Math.random() < 0.4) {
+      var baguette = new THREE.CylinderGeometry(0.045, 0.045, 0.62, 8);
+      var mbg = new THREE.Matrix4().makeRotationZ(0.5);
+      mbg.setPosition(-0.28, 1.0, 0.12);
+      baguette.applyMatrix4(mbg);
+      body.push(paint(baguette, 29));
     }
 
     g.add(new THREE.Mesh(World.mergeGeometries(body), mat));
-    g.scale.setScalar(tall);
+    g.scale.setScalar(0.92 + Math.random() * 0.16);
     g.userData.legs = legs;
     g.userData.kind = kind;
+    g.userData.style = style;
     return g;
   };
 
@@ -5619,6 +5963,808 @@
     return g;
   };
 
+  /* ---------- Православный собор ---------- */
+
+  /* Луковка на барабане: сплюснутый шар с острым носиком и крестом. */
+  function onionDome(x, y, z, r, domeGeos, crossGeos, drumGeos, drumH) {
+    var drum = new THREE.CylinderGeometry(r * 0.72, r * 0.72, drumH, 14);
+    drum.translate(x, y + drumH / 2, z);
+    drumGeos.push(drum);
+    var base = y + drumH;
+
+    // сама луковица: профиль вращения, чтобы был характерный «пузырь с носиком»
+    var pts = [];
+    for (var i = 0; i <= 12; i++) {
+      var t = i / 12;
+      var rr = Math.sin(t * Math.PI * 0.92) * r * (1 - t * 0.15) + r * 0.12 * (1 - t);
+      pts.push(new THREE.Vector2(Math.max(0.02, rr), t * r * 1.8));
+    }
+    var dome = new THREE.LatheGeometry(pts, 14);
+    dome.translate(x, base, z);
+    domeGeos.push(dome);
+
+    var neck = new THREE.CylinderGeometry(r * 0.1, r * 0.14, r * 0.4, 8);
+    neck.translate(x, base + r * 1.85, z);
+    crossGeos.push(neck);
+    var vert = new THREE.BoxGeometry(r * 0.06, r * 0.7, r * 0.06);
+    vert.translate(x, base + r * 2.35, z);
+    crossGeos.push(vert);
+    var horiz = new THREE.BoxGeometry(r * 0.4, r * 0.06, r * 0.06);
+    horiz.translate(x, base + r * 2.45, z);
+    crossGeos.push(horiz);
+  }
+
+  /* Собор: белые стены, барабаны с луковками, апсиды и колокольня.
+     style: 'blue' — синие купола со звёздами (Йошкар-Ола),
+            'basil' — разноцветные (московский). */
+  World.buildCathedral = function (group, x, z, angle, style) {
+    var root = new THREE.Group();
+    root.position.set(x, 0, z);
+    root.rotation.y = angle || 0;
+    group.add(root);
+
+    var wallMat = new THREE.MeshLambertMaterial({ map: World.plasterTexture('#f2ece0') });
+    var roofMat = new THREE.MeshLambertMaterial({ color: style === 'basil' ? 0x2f6c50 : 0x9a9c9f });
+    var goldMat = new THREE.MeshPhongMaterial({ color: 0xd9a441, specular: 0xfff0c0, shininess: 80 });
+    var domeColors = style === 'basil'
+      ? [0x2f6c50, 0xc23b3b, 0x3f6fb5, 0xd9a441, 0x6f4a9c]
+      : [0x2a4d8f, 0x2a4d8f, 0x2a4d8f, 0x2a4d8f, 0xd9a441];
+
+    var walls = [], roofs = [], drums = [], crosses = [];
+    var domesByColor = {};
+    function domeBag(c) {
+      if (!domesByColor[c]) domesByColor[c] = [];
+      return domesByColor[c];
+    }
+
+    // основной четверик
+    var body = new THREE.BoxGeometry(20, 15, 26);
+    World.scaleUV(body, 3, 2);
+    body.translate(0, 7.5, 0);
+    walls.push(body);
+    // алтарные апсиды
+    for (var a = -1; a <= 1; a++) {
+      var apse = new THREE.CylinderGeometry(3.4, 3.4, 11, 12, 1, false, -Math.PI / 2, Math.PI);
+      apse.translate(a * 6.2, 5.5, -14.4);
+      walls.push(apse);
+    }
+    // крыльцо
+    var porch = new THREE.BoxGeometry(9, 7, 4);
+    World.scaleUV(porch, 1, 1);
+    porch.translate(0, 3.5, 15);
+    walls.push(porch);
+
+    // карниз-закомары
+    var cornice = new THREE.BoxGeometry(21.4, 1.2, 27.4);
+    cornice.translate(0, 15.4, 0);
+    roofs.push(cornice);
+    var roofSlab = new THREE.BoxGeometry(19, 1.6, 25);
+    roofSlab.translate(0, 16.6, 0);
+    roofs.push(roofSlab);
+
+    // пять глав: центральная выше, четыре по углам
+    onionDome(0, 17.4, 0, 3.4, domeBag(domeColors[4]), crosses, drums, 8);
+    var corners = [[-6.4, -8], [6.4, -8], [-6.4, 8], [6.4, 8]];
+    for (var i = 0; i < corners.length; i++) {
+      onionDome(corners[i][0], 17.4, corners[i][1], 2.1,
+        domeBag(domeColors[i % 4]), crosses, drums, 5);
+    }
+
+    // колокольня с шатром и главкой
+    var tower = new THREE.BoxGeometry(7, 26, 7);
+    World.scaleUV(tower, 1, 3);
+    tower.translate(0, 13, 20);
+    walls.push(tower);
+    var belfry = new THREE.BoxGeometry(8, 6, 8);
+    belfry.translate(0, 29, 20);
+    walls.push(belfry);
+    var tent = new THREE.ConeGeometry(6.2, 9, 4);
+    tent.rotateY(Math.PI / 4);
+    tent.translate(0, 36.5, 20);
+    roofs.push(tent);
+    onionDome(0, 41, 20, 1.5, domeBag(0xd9a441), crosses, drums, 2);
+
+    root.add(new THREE.Mesh(World.mergeGeometries(walls), wallMat));
+    root.add(new THREE.Mesh(World.mergeGeometries(roofs), roofMat));
+    root.add(new THREE.Mesh(World.mergeGeometries(drums), wallMat));
+    root.add(new THREE.Mesh(World.mergeGeometries(crosses), goldMat));
+    Object.keys(domesByColor).forEach(function (c) {
+      var mat = +c === 0xd9a441 ? goldMat
+        : new THREE.MeshPhongMaterial({ color: +c, specular: 0x9fb6d8, shininess: 40 });
+      root.add(new THREE.Mesh(World.mergeGeometries(domesByColor[c]), mat));
+    });
+
+    // ограда и ёлки вокруг
+    var fence = [];
+    for (var f = 0; f < 26; f++) {
+      var ang = f / 26 * Math.PI * 2;
+      var post = new THREE.BoxGeometry(0.5, 2.2, 0.5);
+      post.translate(Math.cos(ang) * 26, 1.1, Math.sin(ang) * 26);
+      fence.push(post);
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(fence),
+      new THREE.MeshLambertMaterial({ color: 0x3a3f46 })));
+    return root;
+  };
+
+  /* ---------- Колесо обозрения ---------- */
+
+  World.buildFerrisWheel = function (group, x, z, angle) {
+    var root = new THREE.Group();
+    root.position.set(x, 0, z);
+    root.rotation.y = angle || 0;
+    group.add(root);
+
+    var steelMat = new THREE.MeshLambertMaterial({ color: 0xc9ced6 });
+    var R = 24, hubY = 30;
+    var legs = [];
+    for (var s = -1; s <= 1; s += 2) {
+      for (var k = -1; k <= 1; k += 2) {
+        var leg = new THREE.CylinderGeometry(0.5, 0.8, hubY * 1.06, 8);
+        var m = new THREE.Matrix4().makeRotationZ(s * 0.28);
+        m.premultiply(new THREE.Matrix4().makeRotationX(k * 0.12));
+        m.setPosition(s * hubY * 0.28, hubY / 2, k * 3.2);
+        leg.applyMatrix4(m);
+        legs.push(leg);
+      }
+    }
+    var axle = new THREE.CylinderGeometry(1, 1, 8, 10);
+    axle.rotateX(Math.PI / 2);
+    axle.translate(0, hubY, 0);
+    legs.push(axle);
+    root.add(new THREE.Mesh(World.mergeGeometries(legs), steelMat));
+
+    // само колесо крутится
+    var wheel = new THREE.Group();
+    wheel.position.y = hubY;
+    root.add(wheel);
+
+    var rim = [];
+    var N = 18;
+    for (var i = 0; i < N; i++) {
+      var a1 = i / N * Math.PI * 2;
+      // спица от центра наружу
+      var sp = new THREE.CylinderGeometry(0.16, 0.16, R, 6);
+      sp.translate(0, R / 2, 0);
+      sp.rotateZ(-a1);
+      rim.push(sp);
+      // сегмент обода
+      var a2 = (i + 1) / N * Math.PI * 2;
+      var p1 = new THREE.Vector3(Math.sin(a1) * R, Math.cos(a1) * R, 0);
+      var p2 = new THREE.Vector3(Math.sin(a2) * R, Math.cos(a2) * R, 0);
+      var len = p1.distanceTo(p2);
+      var seg = new THREE.CylinderGeometry(0.22, 0.22, len * 1.02, 6);
+      var mid = p1.clone().add(p2).multiplyScalar(0.5);
+      var dir = p2.clone().sub(p1).normalize();
+      var q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      var mm = new THREE.Matrix4().makeRotationFromQuaternion(q);
+      mm.setPosition(mid.x, mid.y, mid.z);
+      seg.applyMatrix4(mm);
+      rim.push(seg);
+    }
+    wheel.add(new THREE.Mesh(World.mergeGeometries(rim), steelMat));
+
+    // кабинки: висят на ободе, поэтому каждая — своя группа
+    var cabColors = [0xe14b4b, 0x3f7fd8, 0x39b06a, 0xf0c23c, 0x8a5cc4, 0xff8a3d];
+    var cabs = [];
+    for (var c = 0; c < N; c++) {
+      var ac = c / N * Math.PI * 2;
+      var pivot = new THREE.Group();
+      pivot.position.set(Math.sin(ac) * R, Math.cos(ac) * R, 0);
+      var cab = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.4, 3),
+        new THREE.MeshLambertMaterial({ color: cabColors[c % cabColors.length] }));
+      cab.position.y = -1.8;
+      pivot.add(cab);
+      wheel.add(pivot);
+      cabs.push(pivot);
+    }
+
+    root.userData.wheel = wheel;
+    root.userData.cabs = cabs;
+    World.ferrisWheels.push(root);
+    return root;
+  };
+
+  World.ferrisWheels = [];
+
+  /* Живые детали города: колесо обозрения крутится, кабинки висят ровно. */
+  World.updateLandmarks = function (dt) {
+    for (var i = 0; i < World.ferrisWheels.length; i++) {
+      var w = World.ferrisWheels[i];
+      w.userData.wheel.rotation.z += dt * 0.09;
+      var cabs = w.userData.cabs;
+      for (var c = 0; c < cabs.length; c++) cabs[c].rotation.z = -w.userData.wheel.rotation.z;
+    }
+  };
+
+  /* ---------- Японская пагода ---------- */
+
+  World.buildPagoda = function (group, x, z, angle) {
+    var root = new THREE.Group();
+    root.position.set(x, 0, z);
+    root.rotation.y = angle || 0;
+    group.add(root);
+
+    var redMat = new THREE.MeshLambertMaterial({ color: 0xb5342c });
+    var roofMat = new THREE.MeshLambertMaterial({ color: 0x2f3a44 });
+    var whiteMat = new THREE.MeshLambertMaterial({ color: 0xe8e2d4 });
+    var goldMat = new THREE.MeshPhongMaterial({ color: 0xd9a441, specular: 0xfff0c0, shininess: 70 });
+
+    var red = [], roofs = [], white = [];
+    // каменное основание
+    var base = new THREE.BoxGeometry(20, 2, 20);
+    base.translate(0, 1, 0);
+    white.push(base);
+
+    var y = 2;
+    for (var t = 0; t < 5; t++) {
+      var w = 14 - t * 1.9;
+      var h = 5 - t * 0.35;
+      var body = new THREE.BoxGeometry(w, h, w);
+      body.translate(0, y + h / 2, y * 0 + 0);
+      red.push(body);
+      // белые панели между столбами
+      var panel = new THREE.BoxGeometry(w * 0.86, h * 0.6, w * 0.86);
+      panel.translate(0, y + h / 2, 0);
+      white.push(panel);
+
+      // крыша с загнутыми углами: тонкая пирамида + карниз
+      var eaveW = w + 7 - t * 0.8;
+      var eave = new THREE.BoxGeometry(eaveW, 0.5, eaveW);
+      eave.translate(0, y + h + 0.25, 0);
+      roofs.push(eave);
+      var pyr = new THREE.ConeGeometry(eaveW * 0.72, 2.6, 4);
+      pyr.rotateY(Math.PI / 4);
+      pyr.translate(0, y + h + 1.7, 0);
+      roofs.push(pyr);
+      // приподнятые уголки
+      for (var cx = -1; cx <= 1; cx += 2) {
+        for (var cz = -1; cz <= 1; cz += 2) {
+          var tip = new THREE.ConeGeometry(0.55, 1.8, 4);
+          var mt = new THREE.Matrix4().makeRotationX(cz * 0.5);
+          mt.premultiply(new THREE.Matrix4().makeRotationZ(-cx * 0.5));
+          mt.setPosition(cx * eaveW * 0.5, y + h + 1.1, cz * eaveW * 0.5);
+          tip.applyMatrix4(mt);
+          roofs.push(tip);
+        }
+      }
+      y += h + 1.4;
+    }
+
+    // шпиль с кольцами
+    var mast = new THREE.CylinderGeometry(0.3, 0.4, 9, 8);
+    mast.translate(0, y + 4.5, 0);
+    red.push(mast);
+    var rings = [];
+    for (var r = 0; r < 6; r++) {
+      var ring = new THREE.TorusGeometry(0.9 - r * 0.1, 0.13, 6, 12);
+      ring.rotateX(Math.PI / 2);
+      ring.translate(0, y + 2 + r * 1.1, 0);
+      rings.push(ring);
+    }
+    var ball = new THREE.SphereGeometry(0.8, 10, 8);
+    ball.translate(0, y + 9.4, 0);
+    rings.push(ball);
+
+    root.add(new THREE.Mesh(World.mergeGeometries(red), redMat));
+    root.add(new THREE.Mesh(World.mergeGeometries(white), whiteMat));
+    root.add(new THREE.Mesh(World.mergeGeometries(roofs), roofMat));
+    root.add(new THREE.Mesh(World.mergeGeometries(rings), goldMat));
+
+    // тории у дорожки
+    var torii = [];
+    for (var g = 0; g < 2; g++) {
+      var zz = 20 + g * 12;
+      for (var px = -1; px <= 1; px += 2) {
+        var post = new THREE.CylinderGeometry(0.5, 0.6, 8, 8);
+        post.translate(px * 4, 4, zz);
+        torii.push(post);
+      }
+      var top = new THREE.BoxGeometry(11, 0.8, 0.9);
+      top.translate(0, 8.2, zz);
+      torii.push(top);
+      var top2 = new THREE.BoxGeometry(9, 0.6, 0.7);
+      top2.translate(0, 7.1, zz);
+      torii.push(top2);
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(torii), redMat));
+    return root;
+  };
+
+  /* ---------- Триумфальная арка ---------- */
+
+  World.buildArc = function (group, x, z, angle) {
+    var root = new THREE.Group();
+    root.position.set(x, 0, z);
+    root.rotation.y = angle || 0;
+    group.add(root);
+
+    var stoneMat = new THREE.MeshLambertMaterial({ map: World.plasterTexture('#ded2b4') });
+    var W = 44, H = 48, D = 22, PW = 13;
+    var parts = [];
+
+    // два пилона
+    for (var s = -1; s <= 1; s += 2) {
+      var pier = new THREE.BoxGeometry(PW, H * 0.72, D);
+      World.scaleUV(pier, 2, 3);
+      pier.translate(s * (W / 2 - PW / 2), H * 0.36, 0);
+      parts.push(pier);
+    }
+    // перемычка над проёмом
+    var lintel = new THREE.BoxGeometry(W, H * 0.28, D);
+    World.scaleUV(lintel, 5, 1);
+    lintel.translate(0, H * 0.86, 0);
+    parts.push(lintel);
+    // свод арки: ступеньками, чтобы читалась дуга
+    for (var i = 0; i < 9; i++) {
+      var t = (i + 0.5) / 9;
+      var ax = (t - 0.5) * (W - PW * 2);
+      var hh = Math.sqrt(Math.max(0, 1 - Math.pow((t - 0.5) * 2, 2))) * 8;
+      var vou = new THREE.BoxGeometry((W - PW * 2) / 9 + 0.2, 8 - hh + 0.2, D);
+      vou.translate(ax, H * 0.72 - (8 - hh) / 2 + 0.1, 0);
+      parts.push(vou);
+    }
+    // карниз и аттик
+    var cor = new THREE.BoxGeometry(W + 3, 2.4, D + 3);
+    cor.translate(0, H - 1.2, 0);
+    parts.push(cor);
+    var attic = new THREE.BoxGeometry(W - 4, 4, D - 4);
+    attic.translate(0, H + 2, 0);
+    parts.push(attic);
+    // рельефы по бокам проёма
+    for (var r = -1; r <= 1; r += 2) {
+      for (var q = -1; q <= 1; q += 2) {
+        var relief = new THREE.BoxGeometry(7, 12, 0.8);
+        relief.translate(r * (W / 2 - PW / 2), H * 0.42, q * (D / 2 + 0.3));
+        parts.push(relief);
+      }
+    }
+    root.add(new THREE.Mesh(World.mergeGeometries(parts), stoneMat));
+
+    // площадь вокруг
+    var plaza = new THREE.Mesh(new THREE.CircleGeometry(46, 32),
+      new THREE.MeshLambertMaterial({ color: 0xb9b09a }));
+    plaza.rotation.x = -Math.PI / 2;
+    plaza.position.y = 0.03;
+    root.add(plaza);
+    return root;
+  };
+
+  /* ---------- Лось ---------- */
+
+  World.elkFurTexture = function () {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#5a4433';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 2400; i++) {
+        g.strokeStyle = Math.random() > 0.5 ? 'rgba(110,86,64,0.5)' : 'rgba(48,34,24,0.5)';
+        g.lineWidth = 1;
+        var x = Math.random() * w, y = Math.random() * h;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + 1.5, y + 4); g.stroke();
+      }
+      // светлая «седина» на холке
+      var grd = g.createLinearGradient(0, 0, 0, h);
+      grd.addColorStop(0, 'rgba(150,126,100,0.35)');
+      grd.addColorStop(0.4, 'rgba(0,0,0,0)');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, w, h);
+    }, 2, 2);
+  };
+
+  /* Сохатый: горбатая холка, тяжёлая морда с горбинкой, серьга под горлом
+     и широкие лопаты рогов. Ноги — отдельные группы, чтобы шагал. */
+  World.buildElk = function () {
+    var g = new THREE.Group();
+    var fur = new THREE.MeshLambertMaterial({ map: World.elkFurTexture() });
+    var dark = new THREE.MeshLambertMaterial({ color: 0x2f251c });
+    var antlerMat = new THREE.MeshLambertMaterial({ color: 0xbaa77f });
+
+    // ---- корпус
+    var body = [];
+    var barrel = new THREE.SphereGeometry(1, 16, 12);
+    var mb = new THREE.Matrix4().makeScale(0.82, 0.92, 1.55);
+    mb.setPosition(0, 1.75, -0.1);
+    barrel.applyMatrix4(mb);
+    body.push(barrel);
+    // высокая холка — главная примета лося
+    var withers = new THREE.SphereGeometry(0.7, 14, 10);
+    var mw = new THREE.Matrix4().makeScale(1, 1.15, 1.1);
+    mw.setPosition(0, 2.15, 0.55);
+    withers.applyMatrix4(mw);
+    body.push(withers);
+    var rump = new THREE.SphereGeometry(0.62, 12, 10);
+    rump.translate(0, 1.7, -1.45);
+    body.push(rump);
+    g.add(new THREE.Mesh(World.mergeGeometries(body), fur));
+
+    // ---- шея и голова
+    var head = new THREE.Group();
+    head.position.set(0, 2.2, 1.0);
+    g.add(head);
+    var neckParts = [];
+    var neck = new THREE.CylinderGeometry(0.34, 0.46, 1.15, 12);
+    var mn = new THREE.Matrix4().makeRotationX(-0.55);
+    mn.setPosition(0, 0.35, 0.25);
+    neck.applyMatrix4(mn);
+    neckParts.push(neck);
+    var skull = new THREE.SphereGeometry(0.3, 12, 10);
+    var ms = new THREE.Matrix4().makeScale(0.85, 0.95, 1.5);
+    ms.setPosition(0, 0.82, 0.85);
+    skull.applyMatrix4(ms);
+    neckParts.push(skull);
+    var muzzle = new THREE.SphereGeometry(0.26, 12, 10);       // тяжёлая горбоносая морда
+    var mm = new THREE.Matrix4().makeScale(0.9, 0.95, 1.25);
+    mm.setPosition(0, 0.72, 1.45);
+    muzzle.applyMatrix4(mm);
+    neckParts.push(muzzle);
+    for (var e = -1; e <= 1; e += 2) {                          // уши-лопухи
+      var ear = new THREE.SphereGeometry(0.16, 8, 6);
+      var me = new THREE.Matrix4().makeScale(0.45, 1, 0.8);
+      me.premultiply(new THREE.Matrix4().makeRotationZ(e * 0.5));
+      me.setPosition(e * 0.28, 1.02, 0.66);
+      ear.applyMatrix4(me);
+      neckParts.push(ear);
+    }
+    head.add(new THREE.Mesh(World.mergeGeometries(neckParts), fur));
+
+    var darkBits = [];
+    var nose = new THREE.SphereGeometry(0.13, 8, 6);
+    nose.translate(0, 0.68, 1.72);
+    darkBits.push(nose);
+    for (var ey = -1; ey <= 1; ey += 2) {
+      var eye = new THREE.SphereGeometry(0.055, 6, 6);
+      eye.translate(ey * 0.21, 0.92, 1.06);
+      darkBits.push(eye);
+    }
+    // «серьга» — кожаный подвес под горлом
+    var bell = new THREE.SphereGeometry(0.14, 8, 8);
+    var mbl = new THREE.Matrix4().makeScale(0.7, 1.7, 0.7);
+    mbl.setPosition(0, 0.28, 0.72);
+    bell.applyMatrix4(mbl);
+    darkBits.push(bell);
+    head.add(new THREE.Mesh(World.mergeGeometries(darkBits), dark));
+
+    // ---- рога-лопаты
+    var antlers = [];
+    for (var s = -1; s <= 1; s += 2) {
+      var stem = new THREE.CylinderGeometry(0.09, 0.12, 0.5, 7);
+      var mst = new THREE.Matrix4().makeRotationZ(s * 0.9);
+      mst.setPosition(s * 0.22, 1.1, 0.62);
+      stem.applyMatrix4(mst);
+      antlers.push(stem);
+      // лопата
+      var palm = new THREE.BoxGeometry(0.95, 0.1, 0.75);
+      var mp = new THREE.Matrix4().makeRotationZ(s * 0.35);
+      mp.premultiply(new THREE.Matrix4().makeRotationY(s * -0.3));
+      mp.setPosition(s * 0.78, 1.32, 0.55);
+      palm.applyMatrix4(mp);
+      antlers.push(palm);
+      // отростки по краю лопаты
+      for (var t = 0; t < 4; t++) {
+        var tine = new THREE.ConeGeometry(0.08, 0.42, 6);
+        var mti = new THREE.Matrix4().makeRotationZ(s * (0.6 + t * 0.1));
+        mti.premultiply(new THREE.Matrix4().makeRotationX(-0.25 + t * 0.2));
+        mti.setPosition(s * (1.05 + t * 0.06), 1.44, 0.85 - t * 0.35);
+        tine.applyMatrix4(mti);
+        antlers.push(tine);
+      }
+    }
+    head.add(new THREE.Mesh(World.mergeGeometries(antlers), antlerMat));
+
+    // ---- длинные ноги с копытами
+    var legPivots = [];
+    var legSpots = [[0.42, 0.75], [-0.42, 0.75], [0.42, -1.15], [-0.42, -1.15]];
+    for (var i = 0; i < legSpots.length; i++) {
+      var pivot = new THREE.Group();
+      pivot.position.set(legSpots[i][0], 1.55, legSpots[i][1]);
+      var lp = [];
+      var thigh = new THREE.CylinderGeometry(0.16, 0.12, 0.85, 8);
+      thigh.translate(0, -0.42, 0);
+      lp.push(thigh);
+      var shin = new THREE.CylinderGeometry(0.1, 0.08, 0.72, 8);
+      var msh2 = new THREE.Matrix4().makeRotationX(i < 2 ? 0.12 : -0.12);
+      msh2.setPosition(0, -1.2, i < 2 ? -0.04 : 0.04);
+      shin.applyMatrix4(msh2);
+      lp.push(shin);
+      pivot.add(new THREE.Mesh(World.mergeGeometries(lp), fur));
+      var hoof = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.18, 8), dark);
+      hoof.position.y = -1.62;
+      pivot.add(hoof);
+      g.add(pivot);
+      legPivots.push(pivot);
+    }
+
+    var tail = new THREE.Group();
+    tail.position.set(0, 1.95, -1.9);
+    var tailMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.04, 0.32, 6), fur);
+    tailMesh.position.y = -0.16;
+    tail.add(tailMesh);
+    g.add(tail);
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(3, 4.2),
+      new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.05;
+    g.add(shadow);
+
+    g.visible = false;
+    g.userData = { legs: legPivots, blob: shadow, head: head, tail: tail, kind: 'elk' };
+    return g;
+  };
+
+  /* ---------- Японский дракон ---------- */
+
+  World.dragonScaleTexture = function () {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#2f7d5a';
+      g.fillRect(0, 0, w, h);
+      for (var row = 0; row < 8; row++) {
+        for (var col = 0; col < 8; col++) {
+          var x = col * 16 + (row % 2 ? 8 : 0), y = row * 16;
+          g.fillStyle = 'rgba(30,92,66,0.85)';
+          g.beginPath();
+          g.arc(x + 8, y + 8, 8, Math.PI, 0);
+          g.fill();
+          g.fillStyle = 'rgba(140,214,170,0.35)';
+          g.beginPath();
+          g.arc(x + 8, y + 7, 5, Math.PI, 0);
+          g.fill();
+        }
+      }
+    }, 3, 2);
+  };
+
+  /* Дракон: длинное змеиное тело из сегментов, рогатая голова с усами,
+     когтистые лапки и грива. Извивается на ходу. */
+  World.buildDragon = function () {
+    var g = new THREE.Group();
+    var skin = new THREE.MeshLambertMaterial({ map: World.dragonScaleTexture() });
+    var belly = new THREE.MeshLambertMaterial({ color: 0xe8c96a });
+    var redMat = new THREE.MeshLambertMaterial({ color: 0xc0392b });
+    var goldMat = new THREE.MeshPhongMaterial({ color: 0xd9a441, specular: 0xfff0c0, shininess: 70 });
+
+    // тело: цепочка сегментов, каждый качается сам — получается волна
+    var segs = [];
+    var parent = g;
+    for (var i = 0; i < 10; i++) {
+      var seg = new THREE.Group();
+      seg.position.set(0, i === 0 ? 2.2 : 0, i === 0 ? 0 : -0.85);
+      var r = 0.52 - i * 0.03;
+      var tube = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), skin);
+      tube.scale.set(1, 0.92, 1.35);
+      seg.add(tube);
+      var scale = new THREE.Mesh(new THREE.ConeGeometry(r * 0.42, r * 0.9, 4), redMat);
+      scale.position.y = r * 0.95;
+      seg.add(scale);
+      parent.add(seg);
+      parent = seg;
+      segs.push(seg);
+    }
+    // хвостовой плавник
+    var fin = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.2, 4), redMat);
+    fin.rotation.x = -Math.PI / 2;
+    fin.position.z = -0.7;
+    parent.add(fin);
+
+    // голова
+    var head = new THREE.Group();
+    head.position.set(0, 2.5, 1.1);
+    g.add(head);
+    var skull = [];
+    var dome = new THREE.SphereGeometry(0.55, 14, 10);
+    var md = new THREE.Matrix4().makeScale(1, 0.85, 1.25);
+    md.setPosition(0, 0, 0.1);
+    dome.applyMatrix4(md);
+    skull.push(dome);
+    var snout = new THREE.SphereGeometry(0.36, 12, 8);
+    var msn = new THREE.Matrix4().makeScale(0.95, 0.75, 1.5);
+    msn.setPosition(0, -0.12, 0.85);
+    snout.applyMatrix4(msn);
+    skull.push(snout);
+    head.add(new THREE.Mesh(World.mergeGeometries(skull), skin));
+
+    var jaw = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.9), belly);
+    jaw.position.set(0, -0.34, 0.75);
+    head.add(jaw);
+
+    var horns = [];
+    for (var s = -1; s <= 1; s += 2) {
+      var horn = new THREE.ConeGeometry(0.1, 0.85, 7);
+      var mh = new THREE.Matrix4().makeRotationZ(s * 0.55);
+      mh.premultiply(new THREE.Matrix4().makeRotationX(-0.5));
+      mh.setPosition(s * 0.28, 0.5, -0.15);
+      horn.applyMatrix4(mh);
+      horns.push(horn);
+      // усы-вибриссы
+      var whisker = new THREE.CylinderGeometry(0.035, 0.02, 1.5, 6);
+      var mwh = new THREE.Matrix4().makeRotationZ(s * 0.35);
+      mwh.premultiply(new THREE.Matrix4().makeRotationX(1.3));
+      mwh.setPosition(s * 0.34, -0.12, 1.25);
+      whisker.applyMatrix4(mwh);
+      horns.push(whisker);
+    }
+    head.add(new THREE.Mesh(World.mergeGeometries(horns), goldMat));
+
+    var eyes = [];
+    for (var ey = -1; ey <= 1; ey += 2) {
+      var eye = new THREE.SphereGeometry(0.11, 8, 8);
+      eye.translate(ey * 0.3, 0.14, 0.5);
+      eyes.push(eye);
+    }
+    head.add(new THREE.Mesh(World.mergeGeometries(eyes),
+      new THREE.MeshLambertMaterial({ color: 0xffd23f, emissive: 0x6a4a00 })));
+
+    // грива вокруг головы
+    var mane = [];
+    for (var m = 0; m < 9; m++) {
+      var a = (m / 9) * Math.PI * 2;
+      var tuft = new THREE.ConeGeometry(0.13, 0.6, 5);
+      var mt = new THREE.Matrix4().makeRotationZ(Math.cos(a) * 0.9);
+      mt.premultiply(new THREE.Matrix4().makeRotationX(Math.sin(a) * 0.9));
+      mt.setPosition(Math.cos(a) * 0.42, Math.sin(a) * 0.42, -0.4);
+      tuft.applyMatrix4(mt);
+      mane.push(tuft);
+    }
+    head.add(new THREE.Mesh(World.mergeGeometries(mane), redMat));
+
+    // лапки с когтями
+    var legPivots = [];
+    var spots = [[0.55, 0.2], [-0.55, 0.2], [0.5, -2.2], [-0.5, -2.2]];
+    for (var l = 0; l < spots.length; l++) {
+      var pivot = new THREE.Group();
+      pivot.position.set(spots[l][0], 2.0, spots[l][1]);
+      var limb = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.11, 1.1, 8), skin);
+      limb.position.y = -0.55;
+      pivot.add(limb);
+      var claw = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.34, 6), goldMat);
+      claw.rotation.x = Math.PI;
+      claw.position.set(0, -1.2, 0.1);
+      pivot.add(claw);
+      g.add(pivot);
+      legPivots.push(pivot);
+    }
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 7),
+      new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.05;
+    g.add(shadow);
+
+    g.visible = false;
+    g.userData = { legs: legPivots, blob: shadow, head: head, segments: segs, kind: 'dragon' };
+    return g;
+  };
+
+  /* ---------- Гигантская улитка ---------- */
+
+  World.shellTexture = function () {
+    return canvasTexture(128, 128, function (g, w, h) {
+      g.fillStyle = '#d8b072';
+      g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 10; i++) {                  // полосы вдоль витка
+        g.fillStyle = i % 2 ? 'rgba(140,88,44,0.55)' : 'rgba(240,214,168,0.5)';
+        g.fillRect(0, i * 13, w, 6);
+      }
+      for (var k = 0; k < 600; k++) {
+        g.fillStyle = 'rgba(110,70,36,0.16)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 1);
+      }
+    }, 1, 1);
+  };
+
+  /* Улитка размером с печку: витая раковина, мягкая нога, рожки с глазами. */
+  World.buildSnail = function () {
+    var g = new THREE.Group();
+    var bodyMat = new THREE.MeshLambertMaterial({ color: 0xc9b48f });
+    var shellMat = new THREE.MeshLambertMaterial({ map: World.shellTexture() });
+    var wetMat = new THREE.MeshPhongMaterial({ color: 0xd8c6a0, specular: 0xffffff, shininess: 60 });
+
+    // нога-подошва
+    var foot = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), wetMat);
+    foot.scale.set(0.85, 0.42, 2.1);
+    foot.position.y = 0.42;
+    g.add(foot);
+
+    // тело поднимается к голове
+    var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.62, 1.2, 12), bodyMat);
+    neck.rotation.x = 0.6;
+    neck.position.set(0, 0.95, 1.35);
+    g.add(neck);
+
+    var head = new THREE.Group();
+    head.position.set(0, 1.35, 1.95);
+    g.add(head);
+    var skull = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 10), bodyMat);
+    skull.scale.set(1, 0.85, 1.15);
+    head.add(skull);
+    // рожки с глазами
+    var horns = [];
+    for (var s = -1; s <= 1; s += 2) {
+      var stalk = new THREE.CylinderGeometry(0.07, 0.09, 1.15, 7);
+      var m = new THREE.Matrix4().makeRotationZ(s * 0.32);
+      m.premultiply(new THREE.Matrix4().makeRotationX(-0.2));
+      m.setPosition(s * 0.28, 0.62, 0.12);
+      stalk.applyMatrix4(m);
+      horns.push(stalk);
+      var eyeball = new THREE.SphereGeometry(0.14, 8, 8);
+      eyeball.translate(s * 0.46, 1.16, 0.24);
+      horns.push(eyeball);
+    }
+    // короткие нижние щупальца
+    for (var t = -1; t <= 1; t += 2) {
+      var tent = new THREE.CylinderGeometry(0.05, 0.07, 0.45, 6);
+      var mt = new THREE.Matrix4().makeRotationX(1.2);
+      mt.setPosition(t * 0.2, -0.18, 0.4);
+      tent.applyMatrix4(mt);
+      horns.push(tent);
+    }
+    head.add(new THREE.Mesh(World.mergeGeometries(horns), bodyMat));
+    var pupils = [];
+    for (var p = -1; p <= 1; p += 2) {
+      var pup = new THREE.SphereGeometry(0.07, 6, 6);
+      pup.translate(p * 0.5, 1.19, 0.35);
+      pupils.push(pup);
+    }
+    head.add(new THREE.Mesh(World.mergeGeometries(pupils),
+      new THREE.MeshLambertMaterial({ color: 0x18140f })));
+
+    // раковина: спираль из шаров
+    var shell = new THREE.Group();
+    shell.position.set(0, 1.5, -0.5);
+    shell.rotation.z = 0.25;
+    g.add(shell);
+    var whorl = [];
+    for (var i = 0; i < 26; i++) {
+      var t2 = i / 25;
+      var a = t2 * Math.PI * 4.4;
+      var rad = 1.55 * (1 - t2 * 0.86);
+      var dist = 1.35 * (1 - t2 * 0.75);
+      var ball = new THREE.SphereGeometry(rad, 12, 10);
+      var mm2 = new THREE.Matrix4().makeScale(1, 1, 0.62);
+      mm2.setPosition(Math.cos(a) * dist, Math.sin(a) * dist, t2 * 0.9 - 0.45);
+      ball.applyMatrix4(mm2);
+      whorl.push(ball);
+    }
+    shell.add(new THREE.Mesh(World.mergeGeometries(whorl), shellMat));
+
+    var shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 5),
+      new THREE.MeshBasicMaterial({ map: World.shadowTexture(), transparent: true, depthWrite: false }));
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.05;
+    g.add(shadow);
+
+    g.visible = false;
+    g.userData = { legs: [], blob: shadow, head: head, shell: shell, kind: 'snail' };
+    return g;
+  };
+
+  /* Зверь этого города. */
+  World.buildBeast = function (kind) {
+    if (kind === 'elk') return World.buildElk();
+    if (kind === 'dragon') return World.buildDragon();
+    if (kind === 'snail') return World.buildSnail();
+    return World.buildCamel();
+  };
+
+  World.BEASTS = {
+    camel: { name: 'верблюд', warn: 'Верблюд вышел на дорогу!', speed: [0.8, 0.5],
+             hit: 'врезался в верблюда', chase: 'Верблюд заметил тебя и бежит следом!',
+             attack: 'верблюд заплевал с ног до головы', bump: 'верблюд сбил тебя с ног',
+             swing: 3, runSpeed: 3.4, color: 0x9fc46a },
+    elk:   { name: 'лось', warn: 'Лось вышел на дорогу!', speed: [1.1, 0.7],
+             hit: 'врезался в лося', chase: 'Лось наклонил рога и пошёл на тебя!',
+             attack: 'лось поддел тебя рогами', bump: 'лось боднул тебя',
+             swing: 3.6, runSpeed: 4.6, color: 0x8a6a3c },
+    dragon:{ name: 'дракон', warn: 'Дракон опустился на дорогу!', speed: [1.6, 0.9],
+             hit: 'врезался в дракона', chase: 'Дракон закружил над тобой!',
+             attack: 'дракон обдал тебя огнём', bump: 'дракон сбил тебя хвостом',
+             swing: 5, runSpeed: 5.2, color: 0xff7a2a },
+    snail: { name: 'улитка', warn: 'Гигантская улитка выползла на дорогу!', speed: [0.28, 0.16],
+             hit: 'врезался в улитку', chase: 'Улитка неспешно поползла за тобой…',
+             attack: 'улитка облепила тебя слизью', bump: 'улитка подмяла тебя под ногу',
+             swing: 1.2, runSpeed: 1.1, color: 0xa8d38a }
+  };
+
   global.World = World;
 })(window);
 
@@ -5855,6 +7001,44 @@
       scene.fog.density = theme.fogDensity;
     }
     if (renderer) renderer.setClearColor(theme.clear);
+
+    rebuildPedestrians();
+    rebuildBeast();
+  }
+
+  /* Прохожие переодеваются в национальные костюмы своего города. */
+  function rebuildPedestrians() {
+    if (!pedestrians.length) return;
+    for (var i = 0; i < pedestrians.length; i++) {
+      var p = pedestrians[i];
+      scene.remove(p.mesh);
+      disposeTree(p.mesh);
+      p.mesh = World.buildPedestrian(World.theme.people);
+      p.mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      scene.add(p.mesh);
+    }
+  }
+
+  /* В каждом городе свой зверь: верблюд, лось, дракон или улитка. */
+  function rebuildBeast() {
+    if (!camel) return;
+    var kind = World.theme.beast || 'camel';
+    if (camel.kind === kind) return;
+    scene.remove(camel.mesh);
+    disposeTree(camel.mesh);
+    camel.mesh = World.buildBeast(kind);
+    camel.mesh.traverse(function (o) {
+      if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+    });
+    if (camel.mesh.userData.blob) camel.mesh.userData.blob.visible = !shadowsOn;
+    scene.add(camel.mesh);
+    camel.kind = kind;
+    camel.info = World.BEASTS[kind];
+    camel.active = false;
+    camel.mesh.visible = false;
+    camel.chase = null;
   }
 
   function disposeTree(obj) {
@@ -5883,7 +7067,8 @@
     var cm = World.buildCamel();
     scene.add(cm);
     camel = { isCamel: true, mesh: cm, active: false, dist: 0, lane: 0, dir: 1,
-      speed: 1, walk: 0, timer: 25 + Math.random() * 30, chase: null, spit: 0 };
+      speed: 1, walk: 0, timer: 25 + Math.random() * 30, chase: null, spit: 0,
+      kind: 'camel', info: World.BEASTS.camel };
 
     var rm = World.buildRoach();
     scene.add(rm);
@@ -6042,9 +7227,10 @@
     if (!admin.noHazards) {
       camel.timer -= dt;
       if (camel.timer <= 0 && !camel.active) {
+        var bi = camel.info || World.BEASTS.camel;
         camel.timer = 40 + Math.random() * 40;
-        spawnCrosser(camel, 0.8 + Math.random() * 0.5, 120, 220);
-        flash('Верблюд вышел на дорогу!', '#e0b070');
+        spawnCrosser(camel, bi.speed[0] + Math.random() * bi.speed[1], 120, 220);
+        flash(bi.warn, '#e0b070');
       }
       roach.timer -= dt;
       if (roach.timer <= 0 && !roach.active) {
@@ -6054,7 +7240,16 @@
       }
     }
     if (camel.chase) updateCamelChase(dt);
-    else updateCrosser(camel, dt, 3);
+    else updateCrosser(camel, dt, (camel.info || World.BEASTS.camel).swing);
+    // дракон извивается, улитка покачивает раковиной
+    if (camel.active && camel.mesh.userData.segments) {
+      var segs = camel.mesh.userData.segments;
+      for (var sg = 0; sg < segs.length; sg++) {
+        segs[sg].rotation.y = Math.sin(camel.walk * 0.9 - sg * 0.55) * 0.28;
+        segs[sg].rotation.x = Math.sin(camel.walk * 0.6 - sg * 0.4) * 0.1;
+      }
+      camel.mesh.position.y += Math.sin(camel.walk * 0.8) * 0.35 + 0.6;
+    }
     updateCrosser(roach, dt, 14);
     // таракан ещё и виляет
     if (roach.active) roach.mesh.rotation.z = Math.sin(roach.walk * 0.6) * 0.12;
@@ -6301,7 +7496,7 @@
   function wreckRacer(r) {
     if (r.dq || r.finished) return;
     if (admin.invincible && r.isHuman) {
-      flash(r.name + ': сбил верблюда — прощено (админ)', '#5dd6ff');
+      flash(r.name + ': ' + (camel.info || World.BEASTS.camel).hit + ' — прощено (админ)', '#5dd6ff');
       return;
     }
     for (var i = 0; i < 22; i++) {
@@ -6312,7 +7507,7 @@
     }
     sfx.crash();
     sfx.jailClang();
-    disqualify(r, 'врезался в верблюда — тюрьма до конца гонки');
+    disqualify(r, (camel.info || World.BEASTS.camel).hit + ' — тюрьма до конца гонки');
     r.mesh.visible = false;
   }
 
@@ -6321,7 +7516,7 @@
   function createPedestrians() {
     var N = 16;
     for (var i = 0; i < N; i++) {
-      var mesh = World.buildPedestrian();
+      var mesh = World.buildPedestrian(World.theme.people);
       mesh.traverse(function (o) {
         if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
       });
@@ -6813,10 +8008,11 @@
     if (camel.active && !admin.noHazards) {
       var ac = Math.abs(track.norm(camel.dist - w.dist + track.length / 2) - track.length / 2);
       if (ac < 90 && !camel.chase) {
+        var bi2 = camel.info || World.BEASTS.camel;
         camel.chase = w;
         camel.spit = 1.5;
-        sfx.camelRoar(Math.max(0, 1 - camera.position.distanceTo(camel.mesh.position) / 160));
-        flash('Верблюд заметил тебя и бежит следом!', '#e0b070');
+        sfx.beastRoar(camel.kind, Math.max(0, 1 - camera.position.distanceTo(camel.mesh.position) / 160));
+        flash(bi2.chase, '#e0b070');
       }
     }
   }
@@ -6841,11 +8037,12 @@
     if (!w) return;
     if (!camel.active || !w.owner.onFoot) { camel.chase = null; return; }
 
+    var info = camel.info || World.BEASTS.camel;
     var diff = track.norm(w.dist - camel.dist + track.length / 2) - track.length / 2;
-    var step = Math.min(Math.abs(diff), 3.4 * dt) * (diff >= 0 ? 1 : -1);
+    var step = Math.min(Math.abs(diff), info.runSpeed * dt) * (diff >= 0 ? 1 : -1);
     camel.dist = track.norm(camel.dist + step);
     camel.lane += Math.max(-2.2 * dt, Math.min(2.2 * dt, w.lane - camel.lane));
-    camel.walk += dt * 5;
+    camel.walk += dt * info.swing * 1.6;
 
     var p = track.pointAt(camel.dist);
     var n = track.sideAt(camel.dist);
@@ -6861,22 +8058,21 @@
     if (camel.spit <= 0 && dist < 14) {
       camel.spit = 2.4 + Math.random() * 1.6;
       var vol = Math.max(0, 1 - camera.position.distanceTo(camel.mesh.position) / 140);
-      sfx.camelSpit(vol);
-      // плевок летит зелёной кляксой
-      for (var s = 0; s < 6; s++) {
+      sfx.beastAttack(camel.kind, vol);
+      // плевок, огонь или слизь — своим цветом
+      for (var s = 0; s < 8; s++) {
         var sp = camel.mesh.position.clone();
-        sp.y += 3.2;
+        sp.y += camel.kind === 'snail' ? 1.6 : 3.2;
         smoke.emit(sp, new THREE.Vector3((Math.random() - 0.5) * 3, 1 + Math.random() * 2,
-          (Math.random() - 0.5) * 3), 0.7, 0x9fc46a);
+          (Math.random() - 0.5) * 3), 0.7, info.color);
       }
       if (dist < 9 && w.stun <= 0) {
         w.stun = 3;
-        flash(w.owner.name + ': верблюд заплевал с ног до головы!', '#9fc46a');
-        sfx.splat(vol);
+        flash(w.owner.name + ': ' + info.attack + '!', '#' + new THREE.Color(info.color).getHexString());
       }
     }
     // догнал вплотную — толкает
-    if (dist < 3.4 && w.stun <= 0) knockWalker(w.owner, w, 'верблюд сбил тебя с ног');
+    if (dist < 3.4 && w.stun <= 0) knockWalker(w.owner, w, info.bump);
   }
 
   /* ---------------- Бабушки на дороге ---------------- */
@@ -8051,6 +9247,7 @@
       updateBirds(dt);
       updateSunHands(dt);
     }
+    if (World.updateLandmarks) World.updateLandmarks(dt);
     if (smoke) smoke.update(dt);
     if (storm.system && state !== 'menu') { updateStorm(dt); updateHeli(dt); }
     var f = (state === 'menu') ? null : focusRacer();
@@ -8542,7 +9739,8 @@
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
       storm: { active: storm.active, kind: storm.kind, level: +storm.level.toFixed(2) },
-      map: mapId, difficulty: difficulty.id,
+      map: mapId, difficulty: difficulty.id, beast: camel ? camel.kind : null,
+      people: World.theme.people,
       coin: coin && coin.active ? { dist: Math.round(coin.dist), lane: +coin.lane.toFixed(1) } : null,
       birds: birds.filter(function (b) { return b.active; }).length,
       peds: pedestrians.filter(function (p) { return p.mesh.visible; }).length,
@@ -8551,7 +9749,10 @@
       police: police.filter(function (c) { return c.active; }).map(function (c) {
         return { dist: Math.round(c.dist), lane: +c.lane.toFixed(1), left: +c.timer.toFixed(1) };
       }),
-      camel: camel && camel.active ? { dist: Math.round(camel.dist), lane: +camel.lane.toFixed(1) } : null,
+      camel: camel && camel.active
+        ? { kind: camel.kind, dist: Math.round(camel.dist), lane: +camel.lane.toFixed(1),
+            chase: !!camel.chase }
+        : null,
       roach: roach && roach.active ? { dist: Math.round(roach.dist), lane: +roach.lane.toFixed(1) } : null,
       racers: racers.map(function (r) {
         return {

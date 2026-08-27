@@ -229,6 +229,44 @@
       scene.fog.density = theme.fogDensity;
     }
     if (renderer) renderer.setClearColor(theme.clear);
+
+    rebuildPedestrians();
+    rebuildBeast();
+  }
+
+  /* Прохожие переодеваются в национальные костюмы своего города. */
+  function rebuildPedestrians() {
+    if (!pedestrians.length) return;
+    for (var i = 0; i < pedestrians.length; i++) {
+      var p = pedestrians[i];
+      scene.remove(p.mesh);
+      disposeTree(p.mesh);
+      p.mesh = World.buildPedestrian(World.theme.people);
+      p.mesh.traverse(function (o) {
+        if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+      });
+      scene.add(p.mesh);
+    }
+  }
+
+  /* В каждом городе свой зверь: верблюд, лось, дракон или улитка. */
+  function rebuildBeast() {
+    if (!camel) return;
+    var kind = World.theme.beast || 'camel';
+    if (camel.kind === kind) return;
+    scene.remove(camel.mesh);
+    disposeTree(camel.mesh);
+    camel.mesh = World.buildBeast(kind);
+    camel.mesh.traverse(function (o) {
+      if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
+    });
+    if (camel.mesh.userData.blob) camel.mesh.userData.blob.visible = !shadowsOn;
+    scene.add(camel.mesh);
+    camel.kind = kind;
+    camel.info = World.BEASTS[kind];
+    camel.active = false;
+    camel.mesh.visible = false;
+    camel.chase = null;
   }
 
   function disposeTree(obj) {
@@ -257,7 +295,8 @@
     var cm = World.buildCamel();
     scene.add(cm);
     camel = { isCamel: true, mesh: cm, active: false, dist: 0, lane: 0, dir: 1,
-      speed: 1, walk: 0, timer: 25 + Math.random() * 30, chase: null, spit: 0 };
+      speed: 1, walk: 0, timer: 25 + Math.random() * 30, chase: null, spit: 0,
+      kind: 'camel', info: World.BEASTS.camel };
 
     var rm = World.buildRoach();
     scene.add(rm);
@@ -416,9 +455,10 @@
     if (!admin.noHazards) {
       camel.timer -= dt;
       if (camel.timer <= 0 && !camel.active) {
+        var bi = camel.info || World.BEASTS.camel;
         camel.timer = 40 + Math.random() * 40;
-        spawnCrosser(camel, 0.8 + Math.random() * 0.5, 120, 220);
-        flash('Верблюд вышел на дорогу!', '#e0b070');
+        spawnCrosser(camel, bi.speed[0] + Math.random() * bi.speed[1], 120, 220);
+        flash(bi.warn, '#e0b070');
       }
       roach.timer -= dt;
       if (roach.timer <= 0 && !roach.active) {
@@ -428,7 +468,16 @@
       }
     }
     if (camel.chase) updateCamelChase(dt);
-    else updateCrosser(camel, dt, 3);
+    else updateCrosser(camel, dt, (camel.info || World.BEASTS.camel).swing);
+    // дракон извивается, улитка покачивает раковиной
+    if (camel.active && camel.mesh.userData.segments) {
+      var segs = camel.mesh.userData.segments;
+      for (var sg = 0; sg < segs.length; sg++) {
+        segs[sg].rotation.y = Math.sin(camel.walk * 0.9 - sg * 0.55) * 0.28;
+        segs[sg].rotation.x = Math.sin(camel.walk * 0.6 - sg * 0.4) * 0.1;
+      }
+      camel.mesh.position.y += Math.sin(camel.walk * 0.8) * 0.35 + 0.6;
+    }
     updateCrosser(roach, dt, 14);
     // таракан ещё и виляет
     if (roach.active) roach.mesh.rotation.z = Math.sin(roach.walk * 0.6) * 0.12;
@@ -675,7 +724,7 @@
   function wreckRacer(r) {
     if (r.dq || r.finished) return;
     if (admin.invincible && r.isHuman) {
-      flash(r.name + ': сбил верблюда — прощено (админ)', '#5dd6ff');
+      flash(r.name + ': ' + (camel.info || World.BEASTS.camel).hit + ' — прощено (админ)', '#5dd6ff');
       return;
     }
     for (var i = 0; i < 22; i++) {
@@ -686,7 +735,7 @@
     }
     sfx.crash();
     sfx.jailClang();
-    disqualify(r, 'врезался в верблюда — тюрьма до конца гонки');
+    disqualify(r, (camel.info || World.BEASTS.camel).hit + ' — тюрьма до конца гонки');
     r.mesh.visible = false;
   }
 
@@ -695,7 +744,7 @@
   function createPedestrians() {
     var N = 16;
     for (var i = 0; i < N; i++) {
-      var mesh = World.buildPedestrian();
+      var mesh = World.buildPedestrian(World.theme.people);
       mesh.traverse(function (o) {
         if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
       });
@@ -1187,10 +1236,11 @@
     if (camel.active && !admin.noHazards) {
       var ac = Math.abs(track.norm(camel.dist - w.dist + track.length / 2) - track.length / 2);
       if (ac < 90 && !camel.chase) {
+        var bi2 = camel.info || World.BEASTS.camel;
         camel.chase = w;
         camel.spit = 1.5;
-        sfx.camelRoar(Math.max(0, 1 - camera.position.distanceTo(camel.mesh.position) / 160));
-        flash('Верблюд заметил тебя и бежит следом!', '#e0b070');
+        sfx.beastRoar(camel.kind, Math.max(0, 1 - camera.position.distanceTo(camel.mesh.position) / 160));
+        flash(bi2.chase, '#e0b070');
       }
     }
   }
@@ -1215,11 +1265,12 @@
     if (!w) return;
     if (!camel.active || !w.owner.onFoot) { camel.chase = null; return; }
 
+    var info = camel.info || World.BEASTS.camel;
     var diff = track.norm(w.dist - camel.dist + track.length / 2) - track.length / 2;
-    var step = Math.min(Math.abs(diff), 3.4 * dt) * (diff >= 0 ? 1 : -1);
+    var step = Math.min(Math.abs(diff), info.runSpeed * dt) * (diff >= 0 ? 1 : -1);
     camel.dist = track.norm(camel.dist + step);
     camel.lane += Math.max(-2.2 * dt, Math.min(2.2 * dt, w.lane - camel.lane));
-    camel.walk += dt * 5;
+    camel.walk += dt * info.swing * 1.6;
 
     var p = track.pointAt(camel.dist);
     var n = track.sideAt(camel.dist);
@@ -1235,22 +1286,21 @@
     if (camel.spit <= 0 && dist < 14) {
       camel.spit = 2.4 + Math.random() * 1.6;
       var vol = Math.max(0, 1 - camera.position.distanceTo(camel.mesh.position) / 140);
-      sfx.camelSpit(vol);
-      // плевок летит зелёной кляксой
-      for (var s = 0; s < 6; s++) {
+      sfx.beastAttack(camel.kind, vol);
+      // плевок, огонь или слизь — своим цветом
+      for (var s = 0; s < 8; s++) {
         var sp = camel.mesh.position.clone();
-        sp.y += 3.2;
+        sp.y += camel.kind === 'snail' ? 1.6 : 3.2;
         smoke.emit(sp, new THREE.Vector3((Math.random() - 0.5) * 3, 1 + Math.random() * 2,
-          (Math.random() - 0.5) * 3), 0.7, 0x9fc46a);
+          (Math.random() - 0.5) * 3), 0.7, info.color);
       }
       if (dist < 9 && w.stun <= 0) {
         w.stun = 3;
-        flash(w.owner.name + ': верблюд заплевал с ног до головы!', '#9fc46a');
-        sfx.splat(vol);
+        flash(w.owner.name + ': ' + info.attack + '!', '#' + new THREE.Color(info.color).getHexString());
       }
     }
     // догнал вплотную — толкает
-    if (dist < 3.4 && w.stun <= 0) knockWalker(w.owner, w, 'верблюд сбил тебя с ног');
+    if (dist < 3.4 && w.stun <= 0) knockWalker(w.owner, w, info.bump);
   }
 
   /* ---------------- Бабушки на дороге ---------------- */
@@ -2425,6 +2475,7 @@
       updateBirds(dt);
       updateSunHands(dt);
     }
+    if (World.updateLandmarks) World.updateLandmarks(dt);
     if (smoke) smoke.update(dt);
     if (storm.system && state !== 'menu') { updateStorm(dt); updateHeli(dt); }
     var f = (state === 'menu') ? null : focusRacer();
@@ -2916,7 +2967,8 @@
       }),
       music: { on: music.enabled, playing: music.playing, level: music.intensity },
       storm: { active: storm.active, kind: storm.kind, level: +storm.level.toFixed(2) },
-      map: mapId, difficulty: difficulty.id,
+      map: mapId, difficulty: difficulty.id, beast: camel ? camel.kind : null,
+      people: World.theme.people,
       coin: coin && coin.active ? { dist: Math.round(coin.dist), lane: +coin.lane.toFixed(1) } : null,
       birds: birds.filter(function (b) { return b.active; }).length,
       peds: pedestrians.filter(function (p) { return p.mesh.visible; }).length,
@@ -2925,7 +2977,10 @@
       police: police.filter(function (c) { return c.active; }).map(function (c) {
         return { dist: Math.round(c.dist), lane: +c.lane.toFixed(1), left: +c.timer.toFixed(1) };
       }),
-      camel: camel && camel.active ? { dist: Math.round(camel.dist), lane: +camel.lane.toFixed(1) } : null,
+      camel: camel && camel.active
+        ? { kind: camel.kind, dist: Math.round(camel.dist), lane: +camel.lane.toFixed(1),
+            chase: !!camel.chase }
+        : null,
       roach: roach && roach.active ? { dist: Math.round(roach.dist), lane: +roach.lane.toFixed(1) } : null,
       racers: racers.map(function (r) {
         return {

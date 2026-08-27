@@ -633,6 +633,65 @@
     o.stop(t + 1.2);
   };
 
+  /* Рёв зверя: у каждого свой голос. */
+  Sfx.prototype.beastRoar = function (kind, vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    if (kind === 'snail') { this.footstep(vol * 0.8); return; }   // улитка молчит
+    var t = this.ctx.currentTime;
+    var base = kind === 'elk' ? 120 : (kind === 'dragon' ? 70 : 150);
+    var dur = kind === 'dragon' ? 1.6 : 1.1;
+    var o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.linearRampToValueAtTime(base * 0.62, t + dur * 0.5);
+    o.frequency.linearRampToValueAtTime(base * 0.85, t + dur * 0.85);
+    var f = this.ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = kind === 'dragon' ? 600 : 900;
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.22 * vol, t + 0.12);
+    g.gain.setValueAtTime(0.22 * vol, t + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(f).connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + dur + 0.1);
+    if (kind === 'dragon') this.noise(dur, 0.12 * vol, 700);
+  };
+
+  /* Атака зверя: плевок, удар рогами, струя огня или шлепок слизи. */
+  Sfx.prototype.beastAttack = function (kind, vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    if (kind === 'camel') { this.camelSpit(vol); return; }
+    if (kind === 'elk') {
+      this.thud();
+      var s = this;
+      setTimeout(function () { s.beastRoar('elk', vol); }, 120);
+      return;
+    }
+    if (kind === 'dragon') {
+      // струя огня: длинный шум с падающим фильтром
+      this.noise(1.1, 0.3 * vol, 1400);
+      var t = this.ctx.currentTime;
+      var o = this.ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(220, t);
+      o.frequency.exponentialRampToValueAtTime(60, t + 1.0);
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.16 * vol, t + 0.1);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 1.2);
+      return;
+    }
+    this.splat(vol);                                   // улитка: шлепок слизи
+  };
+
+
   /* Шаги пешком: два глухих шлепка. */
   Sfx.prototype.footstep = function (vol) {
     this.init();
