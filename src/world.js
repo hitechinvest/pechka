@@ -720,6 +720,7 @@
        так что дорога нигде сама себя не задевает. */
     alps: {
       width: 20,
+      startHigh: true,
       points: [
         [0, 0], [-90, -15], [-160, -60],
         [-205, -100], [-190, -140], [-125, -148],
@@ -732,12 +733,17 @@
         [230, -220], [240, -140], [215, -70],
         [170, -10], [95, 15], [30, 12]
       ],
+      // Перевал: пологий тягун вверх и короткий обрыв вниз — и так трижды
+      // за круг. Старт стоит на вершине, поэтому сразу за флагом дорога
+      // валится под уклон около 28%.
+      ramps: { count: 3, amp: 36, fall: 0.27, phase: 0.73 },
       hills: [
-        { amp: 9, harm: 1 }, { amp: 6, harm: 2 }, { amp: 3.4, harm: 5 },
-        { amp: 1.2, harm: 17 }, { amp: 0.5, harm: 31 }
+        { amp: 11, harm: 1 }, { amp: 4, harm: 5 }, { amp: 1.2, harm: 19 }
       ],
       jumps: [
-        { at: 0.47, amp: 1.6, up: 22, down: 6 },
+        { at: 0.31, amp: 2.2, up: 26, down: 7 },
+        { at: 0.47, amp: 1.8, up: 22, down: 6 },
+        { at: 0.70, amp: 2.4, up: 28, down: 7.5 },
         { at: 0.86, amp: 2.1, up: 26, down: 7 }
       ]
     }
@@ -764,19 +770,37 @@
        поэтому дорога никогда не уходит ниже земли, а профиль замкнут — на
        стыке круга нет ступеньки. Фазы нулевые: на старте профиль ровный. */
     var HILLS = spec.hills;
+    /* Асимметричные «ступени» перевала: вверх долго и полого, вниз коротко
+       и круто. Обе половины сшиты сглаживающей кривой, поэтому профиль
+       остаётся гладким и замкнутым. */
+    var RAMPS = spec.ramps;
+    function smoothStep(x) { return x * x * (3 - 2 * x); }
+    function rampAt(u) {
+      if (!RAMPS) return 0;
+      var t = (u * RAMPS.count + RAMPS.phase) % 1;
+      var rise = 1 - RAMPS.fall;
+      return RAMPS.amp * (t < rise
+        ? smoothStep(t / rise)
+        : 1 - smoothStep((t - rise) / RAMPS.fall));
+    }
     /* Отдельные трамплины: короткие крутые бугры, на которых печку
        по-настоящему подбрасывает даже без турбо. Заезд пологий,
        а за гребнем дорога обрывается. */
     var JUMPS = spec.jumps;
     track.jumps = JUMPS;
 
+    /* startHigh: круг начинается на вершине перевала — тогда сразу со старта
+       дорога валится вниз, а не карабкается вверх. */
+    var TOP = !!spec.startHigh;
     track.heightAt = function (dist) {
       var L = this.length;
       var u = this.norm(dist) / L * Math.PI * 2;
       var h = 0;
       for (var i = 0; i < HILLS.length; i++) {
-        h += HILLS[i].amp * (1 - Math.cos(u * HILLS[i].harm)) / 2;
+        var c = Math.cos(u * HILLS[i].harm);
+        h += HILLS[i].amp * (TOP ? (1 + c) : (1 - c)) / 2;
       }
+      h += rampAt(this.norm(dist) / L);
       for (var j = 0; j < JUMPS.length; j++) {
         var diff = this.norm(dist - JUMPS[j].at * L);
         if (diff > L / 2) diff -= L;                       // берём ближайшую сторону
@@ -871,10 +895,13 @@
       var p = track.pointAt(d);
       var n = track.sideAt(d);
       // На шпильках скат нельзя делать шире радиуса поворота, иначе
-      // внутренняя сторона насыпи вывернется наизнанку.
+      // внутренняя сторона насыпи вывернется наизнанку. В горах скат
+      // короткий и крутой — это скальная полка, а не пологая насыпь.
       var turn = Math.abs(track.turnAt(d));
       var room = turn > 1e-4 ? 0.55 / turn : Infinity;
-      var run = Math.min(6 + p.y * 1.5, Math.max(4, room - edge));
+      var slopeRun = World.theme.embankRun || 1.5;
+      var maxRun = World.theme.embankMax || Infinity;
+      var run = Math.min(6 + p.y * slopeRun, maxRun, Math.max(4, room - edge));
       var lTop = p.clone().addScaledVector(n, edge);
       var lBot = p.clone().addScaledVector(n, edge + run);
       var rTop = p.clone().addScaledVector(n, -edge);
@@ -1113,7 +1140,8 @@
       id: 'swiss', title: 'Швейцария', hint: 'горный серпантин со шпильками',
       track: 'alps',
       ground: 'grass', groundTint: 0xdfe8dc,
-      shoulder: 0x9aa587, embankment: 0x7f8d68,
+      shoulder: 0x9aa587, embankment: 0x76705f,
+      embankRun: 0.5, embankMax: 24, rails: true,
       sky: [[0.00,'#12386f'],[0.18,'#2f6aa8'],[0.36,'#6fa3cd'],[0.54,'#a8c8de'],
             [0.70,'#d3e0e4'],[0.86,'#eaf0ef'],[1.00,'#f2f4f0']],
       haze: 'rgba(226,236,240,', clouds: 130, cloudAlpha: 0.28,
@@ -1198,7 +1226,8 @@
       var p = track.pointAt(d);
       var n = track.sideAt(d);
       var v = new THREE.Vector3(p.x, 0, p.z).addScaledVector(n, off);
-      return { x: v.x, z: v.z, face: Math.atan2(-n.x * Math.sign(off), -n.z * Math.sign(off)) };
+      return { x: v.x, z: v.z, y: p.y,
+        face: Math.atan2(-n.x * Math.sign(off), -n.z * Math.sign(off)) };
     }
     var A = spotAt(0, -82);        // у самого финиша
     var B = spotAt(0.52, 105);     // дальняя сторона круга
@@ -1324,13 +1353,14 @@
       World.buildPagoda(group, B.x, B.z, B.face);
       World.buildFlemishRow(group, D.x, D.z, D.face);           // квартал у башни
     } else if (theme.landmarks === 'swiss') {
-      // Маттерхорн видно отовсюду, у трассы — шале, канатка и деревня
+      // Маттерхорн видно отовсюду, у трассы — шале, канатка и деревня.
+      // Дома стоят на той же высоте, что и дорога рядом с ними.
       World.buildMatterhorn(group, A.x - 520, A.z - 620);
-      World.buildChalet(group, A.x, A.z, A.face, 1.6);
-      World.buildCableCar(group, B.x, B.z, B.face);
-      World.buildChalet(group, C.x, C.z, C.face, 1.1);
-      World.buildChalet(group, D.x, D.z, D.face + 0.4, 1.2);
-      World.buildChalet(group, E.x, E.z, E.face, 0.9);
+      World.buildChalet(group, A.x, A.z, A.face, 1.6, A.y * 0.9);
+      World.buildCableCar(group, B.x, B.z, B.face, B.y * 0.85);
+      World.buildChalet(group, C.x, C.z, C.face, 1.1, C.y * 0.9);
+      World.buildChalet(group, D.x, D.z, D.face + 0.4, 1.2, D.y * 0.9);
+      World.buildChalet(group, E.x, E.z, E.face, 0.9, E.y * 0.9);
     } else if (theme.landmarks === 'paris') {
       World.buildEiffel(group, A.x, A.z);
       World.buildArc(group, B.x, B.z, B.face);
@@ -5626,9 +5656,10 @@
      Считаем одинаково в мире и в игре, чтобы во двор не попали пальмы. */
   World.jailSpot = function (track) {
     var best = Infinity, d = track.length * 0.66;
-    for (var u = 0.55; u < 0.95; u += 0.01) {
+    for (var u = 0.5; u < 0.99; u += 0.005) {
       var dd = track.length * u;
-      var score = Math.abs(track.heightAt(dd)) + Math.abs(track.slopeAt(dd)) * 40;
+      // высота важнее уклона: двор не должен висеть над склоном
+      var score = Math.abs(track.heightAt(dd)) * 3 + Math.abs(track.slopeAt(dd)) * 60;
       if (score < best) { best = score; d = dd; }
     }
     return { dist: d, near: 18, far: 46, half: 22 };
@@ -6035,9 +6066,9 @@
   };
 
   /* Большое шале-отель с балконами и поленницей. */
-  World.buildChalet = function (group, x, z, angle, scale) {
+  World.buildChalet = function (group, x, z, angle, scale, y) {
     var root = new THREE.Group();
-    root.position.set(x, 0, z);
+    root.position.set(x, y || 0, z);
     root.rotation.y = angle || 0;
     root.scale.setScalar(scale || 1);
     group.add(root);
@@ -6097,9 +6128,9 @@
   };
 
   /* Канатная дорога: две опоры, трос и кабинки, которые едут вверх-вниз. */
-  World.buildCableCar = function (group, x, z, angle) {
+  World.buildCableCar = function (group, x, z, angle, y) {
     var root = new THREE.Group();
-    root.position.set(x, 0, z);
+    root.position.set(x, y || 0, z);
     root.rotation.y = angle || 0;
     group.add(root);
 
@@ -6316,6 +6347,108 @@
     g.userData = { legs: legPivots, blob: shadow, head: head, tail: tail, bell: bell, kind: 'cow' };
     return g;
   };
+
+  /* Отбойник вдоль горной дороги: столбики и лента по обеим сторонам.
+     Ставим только там, где под дорогой обрыв. */
+  World.guardRails = function (track) {
+    var posts = [], rails = [];
+    var N = 460;
+    var edge = track.width / 2 + 1.4;
+    for (var i = 0; i < N; i++) {
+      var d = track.length * i / N;
+      var h = track.heightAt(d);
+      if (h < 7) continue;                       // низко — обойдёмся без отбойника
+      var p = track.pointAt(d);
+      var n = track.sideAt(d);
+      var t = track.tangentAt(d);
+      var d2 = track.length * (i + 1) / N;
+      var p2 = track.pointAt(d2);
+      var n2 = track.sideAt(d2);
+      for (var s = -1; s <= 1; s += 2) {
+        var a = p.clone().addScaledVector(n, s * edge);
+        var b = p2.clone().addScaledVector(n2, s * edge);
+        var len = a.distanceTo(b);
+        if (len > 14) continue;                  // на стыке круга не тянем ленту
+        // столбик
+        if (i % 2 === 0) {
+          var post = new THREE.BoxGeometry(0.16, 1.05, 0.16);
+          post.translate(a.x, a.y + 0.5, a.z);
+          posts.push(post);
+        }
+        // лента между столбиками
+        var rail = new THREE.BoxGeometry(0.1, 0.34, len * 1.04);
+        var dir = b.clone().sub(a).normalize();
+        var q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+        var m = new THREE.Matrix4().makeRotationFromQuaternion(q);
+        var mid = a.clone().add(b).multiplyScalar(0.5);
+        m.setPosition(mid.x, mid.y + 0.85, mid.z);
+        rail.applyMatrix4(m);
+        rails.push(rail);
+      }
+    }
+    if (!rails.length) return null;
+    var group = new THREE.Group();
+    group.add(new THREE.Mesh(World.mergeGeometries(rails),
+      new THREE.MeshPhongMaterial({ color: 0xc9ced6, specular: 0xffffff, shininess: 45 })));
+    if (posts.length) {
+      group.add(new THREE.Mesh(World.mergeGeometries(posts),
+        new THREE.MeshLambertMaterial({ color: 0x6f7680 })));
+    }
+    return group;
+  };
+
+  /* Знак «крутой спуск» на обочине перед обрывистым участком. */
+  World.slopeSigns = function (track, host) {
+    var tex = canvasTexture(128, 128, function (ctx, w, h) {
+      ctx.clearRect(0, 0, w, h);
+      // красный треугольник с чёрным уклоном
+      ctx.fillStyle = '#d02b23';
+      ctx.beginPath();
+      ctx.moveTo(64, 8); ctx.lineTo(120, 112); ctx.lineTo(8, 112);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#f5f2ea';
+      ctx.beginPath();
+      ctx.moveTo(64, 24); ctx.lineTo(106, 102); ctx.lineTo(22, 102);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#17171b';
+      ctx.beginPath();
+      ctx.moveTo(30, 92); ctx.lineTo(98, 56); ctx.lineTo(98, 92);
+      ctx.closePath(); ctx.fill();
+      ctx.font = 'bold 20px system-ui, sans-serif';
+      ctx.fillStyle = '#17171b';
+      ctx.textAlign = 'center';
+      ctx.fillText('12%', 64, 84);
+    });
+    var mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true,
+      side: THREE.DoubleSide, alphaTest: 0.4 });
+    var postMat = new THREE.MeshLambertMaterial({ color: 0x9aa0a6 });
+
+    var made = 0;
+    for (var i = 0; i < 240 && made < 8; i++) {
+      var d = track.length * i / 240;
+      var slope = track.slopeAt(d);
+      if (slope > -0.11) continue;                       // спуск недостаточно крутой
+      // не ставим два знака подряд
+      var prev = track.slopeAt(d - track.length / 240);
+      if (prev <= -0.11) continue;
+      var p = track.pointAt(d - 40);
+      var n = track.sideAt(d - 40);
+      var t = track.tangentAt(d - 40);
+      var g = new THREE.Group();
+      g.position.copy(p).addScaledVector(n, -(track.width / 2 + 3));
+      g.position.y = p.y;
+      g.rotation.y = Math.atan2(-t.x, -t.z);
+      var post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.6, 8), postMat);
+      post.position.y = 1.3;
+      g.add(post);
+      var plate = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), mat);
+      plate.position.y = 2.6;
+      g.add(plate);
+      host.add(g);
+      made++;
+    }
+  };
+
 
   global.World = World;
 })(window);

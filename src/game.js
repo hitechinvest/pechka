@@ -231,6 +231,11 @@
       themeObjects.push(ground[k]);
     }
 
+    if (World.theme.rails) {
+      var rails = World.guardRails(track);
+      if (rails) statics.add(rails);
+      World.slopeSigns(track, statics);
+    }
     World.jumpSigns(track, statics);
     intersections = World.buildIntersections(track, statics);
     intersections.forEach(function (i) { World.applyLightState(i); });
@@ -2554,25 +2559,32 @@
       // машина быстрее печки и лучше держит дорогу, полицейская — ещё быстрее
       var vehK = r.vehicle === 'police' ? 1.3 : (r.vehicle === 'car' ? 1.18 : 1);
       var skill = r.isHuman ? 1 : r.ai.skill * (admin.weakAI ? 0.75 : 1);
+      // горки: в подъём тянет назад и режет потолок скорости, а под уклон
+      // печка разгоняется сверх обычного предела — тем сильнее, чем круче
+      var slope = soaring ? 0 : track.slopeAt(r.dist);
       var maxV = (r.boosting ? BOOST_SPEED : MAX_SPEED) * skill * vehK *
         upgTop(r) * (onEdge ? EDGE_PENALTY : 1);
+      if (slope > 0) maxV *= Math.max(0.5, 1 - slope * 2.2);
+      // под гору потолок выше: на 29-процентном спуске печку разгоняет за 140 км/ч
+      var cap = maxV * (slope < 0 ? DOWNHILL_CAP + Math.min(0.45, -slope * 1.7) : 1);
       var accel = (r.boosting ? BOOST_ACCEL : ACCEL) * upgAccel(r);
-      if (r.throttle) r.speed = Math.min(maxV, r.speed + accel * dt);
-      else r.speed = Math.max(0, r.speed - BRAKE * upgBrake(r) * dt);
-      if (r.speed > maxV) r.speed = Math.max(maxV, r.speed - BRAKE * 0.8 * dt);
+      // мотор только разгоняет до своего потолка: если печку уже разогнала
+      // гора, он её не притормаживает
+      if (r.throttle) {
+        if (r.speed < maxV) r.speed = Math.min(maxV, r.speed + accel * dt);
+      } else {
+        r.speed = Math.max(0, r.speed - BRAKE * upgBrake(r) * dt);
+      }
 
-      // горки: в подъём тянет назад и режет потолок скорости,
-      // под уклон печка разгоняется сверх обычного предела
-      var slope = track.slopeAt(r.dist);
       if (soaring) {
-        slope = 0;                                  // в воздухе горок нет
         maxV = MAX_SPEED * 1.18;
+        cap = maxV;
         if (r.throttle) r.speed = Math.min(maxV, r.speed + ACCEL * 1.2 * dt);
       } else {
-        if (slope > 0) maxV *= Math.max(0.5, 1 - slope * 2.2);
+        // сама горка: в подъём тормозит, под уклон разгоняет даже без газа
         r.speed = Math.max(0, r.speed - HILL_PULL * slope * dt);
-        r.speed = Math.min(r.speed, maxV * DOWNHILL_CAP);
       }
+      if (r.speed > cap) r.speed = Math.max(cap, r.speed - BRAKE * 0.8 * dt);
 
       r.slope = slope;
 
@@ -2588,8 +2600,10 @@
       // Резкий поворот: если скорости больше, чем держит дорога,
       // печку тащит наружу — на серпантине приходится тормозить.
       var turn = track.turnAt(r.dist);
+      // на крутом спуске печку разгружает — держит хуже
+      var down = Math.max(0, -slope);
       var hold = GRIP * upgSteer(r) * (1 - wet * 0.35) * (onEdge ? 0.72 : 1) *
-        (r.vehicle === 'stove' ? 1 : 1.15);
+        (1 - Math.min(0.3, down * 1.1)) * (r.vehicle === 'stove' ? 1 : 1.15);
       var need = r.speed * r.speed * Math.abs(turn);
       if (!soaring && need > hold && r.speed > 6) {
         var excess = Math.min(9, need - hold);
@@ -2755,7 +2769,8 @@
     }
 
     // впереди крутой поворот: считаем безопасную скорость и сбрасываем заранее
-    var look = 14 + r.speed * (1.1 + r.ai.reaction);
+    var drop = Math.max(0, -track.slopeAt(r.dist));
+    var look = 14 + r.speed * (1.1 + r.ai.reaction + drop * 2.5);
     var sharp = 0;
     for (var la = 8; la <= look; la += 7) {
       var tt = Math.abs(track.turnAt(r.dist + la));
@@ -3017,6 +3032,19 @@
     ui.granny.style.opacity = granny ? '1' : '0';
     if (granny) ui.grannyDist.textContent = Math.round(granny.gap) + ' м';
 
+    // крутой спуск впереди: предупреждаем и показываем уклон
+    var slopeNow = track.slopeAt(f.dist);
+    var slopeSoon = track.slopeAt(f.dist + 40);
+    var steep = Math.min(slopeNow, slopeSoon);
+    if (steep < -0.1 && f.soarY < 1) {
+      ui.storm.style.opacity = '1';
+      ui.storm.textContent = '⛰ КРУТОЙ СПУСК · ' + Math.round(-steep * 100) + '%';
+      ui.storm.classList.remove('rain');
+      ui.storm.classList.add('steep');
+    } else {
+      ui.storm.classList.remove('steep');
+    }
+
     // полёт на солнечных руках
     ui.soar.style.opacity = f.soarY > 1 ? '1' : '0';
     if (f.soarY > 1) {
@@ -3036,11 +3064,14 @@
     } else if (f.jail > 0) {
       ui.jailText.textContent = 'ТЮРЬМА · ' + Math.ceil(f.jail) + ' с · ' + f.jailReason;
     }
-    ui.storm.style.opacity = storm.level > 0.25 ? '1' : '0';
-    if (storm.level > 0.25) {
-      ui.storm.textContent = storm.kind === 'rain' ? '🌧 ЛИВЕНЬ'
-        : (storm.kind === 'snow' ? '❄️ СНЕГОПАД' : '🌪 ПЕСЧАНАЯ БУРЯ');
-      ui.storm.classList.toggle('rain', storm.kind !== 'sand');
+    // непогода занимает ту же табличку, но крутой спуск важнее
+    if (!ui.storm.classList.contains('steep')) {
+      ui.storm.style.opacity = storm.level > 0.25 ? '1' : '0';
+      if (storm.level > 0.25) {
+        ui.storm.textContent = storm.kind === 'rain' ? '🌧 ЛИВЕНЬ'
+          : (storm.kind === 'snow' ? '❄️ СНЕГОПАД' : '🌪 ПЕСЧАНАЯ БУРЯ');
+        ui.storm.classList.toggle('rain', storm.kind !== 'sand');
+      }
     }
 
     // состояние каждого игрока
@@ -3884,6 +3915,20 @@
     return out;
   };
 
+  /* Профиль высот: где самый крутой спуск и как высоко забирается дорога. */
+  Game.profile = function () {
+    var maxH = 0, minS = 0, at = 0, up = 0;
+    for (var d = 0; d < track.length; d += 5) {
+      var h = track.heightAt(d), sl = track.slopeAt(d);
+      if (h > maxH) maxH = h;
+      if (sl < minS) { minS = sl; at = d; }
+      if (sl > up) up = sl;
+    }
+    return { maxHeight: +maxH.toFixed(1), steepestDown: +(minS * 100).toFixed(1),
+      steepestUp: +(up * 100).toFixed(1), steepestAt: Math.round(at),
+      length: Math.round(track.length) };
+  };
+
   Game.debug = function () {
     return {
       state: state,
@@ -4018,6 +4063,7 @@
   };
   global.__probe = Game.probe;
   global.__corners = Game.corners;
+  global.__profile = Game.profile;
   global.__dbg = Game.debug;
   global.__renderInfo = Game.renderInfo;
   global.__ground = Game.groundUnder;
