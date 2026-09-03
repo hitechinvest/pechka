@@ -19,6 +19,7 @@
   var HILL_PULL = 24;          // как сильно горка тянет назад (м/с^2 на единицу уклона)
   var DOWNHILL_CAP = 1.22;     // под горку можно перебрать сверх обычного максимума
   var SOAR_HEIGHT = 20;        // на какой высоте несут солнечные руки
+  var GRIP = 8.6;              // сколько поперечного ускорения держит печка, м/с^2
   var GRAVITY = 12.5;          // сила тяжести: чуть меньше настоящей, чтобы прыжок читался
 
   var COLORS = [0xff4d4d, 0x4da3ff, 0x53d769, 0xffd23f, 0xb46cff, 0xff8a3d, 0x38e0d0, 0xff6fb5];
@@ -190,25 +191,20 @@
   }
 
   function buildWorld() {
-    track = World.buildTrack();
     buildScenery(mapId);
-    World.jumpSigns(track, scene);
-    intersections = World.buildIntersections(track, scene);
-    intersections.forEach(function (i) { World.applyLightState(i); });
-    addStartLine();
     smoke = new World.SmokeSystem(scene, 300);
     createGrannies();
     createHazards();
-    createRoadSigns();
     createCars();
-    createJail();
     createPedestrians();
     createBirds();
     createCoin();
   }
 
-  /* Город, земля и дорога — всё, что меняется вместе с картой.
-     Трасса при этом одна и та же, поэтому бабушки, знаки и печки на месте. */
+  /* Всё, что меняется вместе с картой: у каждой свой рисунок трассы,
+     свой город, своя земля, перекрёстки, знаки и тюрьма. Печки, бабушки
+     и звери живут в координатах «дистанция вдоль круга + полоса»,
+     поэтому переезжают на новую трассу сами. */
   function buildScenery(id) {
     var theme = World.THEMES[id] || World.THEMES.dubai;
     mapId = theme.id;
@@ -220,6 +216,11 @@
     }
     themeObjects = [];
 
+    track = World.buildTrack(theme.track);
+    var statics = new THREE.Group();
+    scene.add(statics);
+    themeObjects.push(statics);
+
     themeObjects.push(World.buildCity(track, scene, theme));
     road = World.roadMesh(track);
     var ground = [World.embankmentMesh(track), World.shoulderMesh(track), road,
@@ -229,6 +230,13 @@
       scene.add(ground[k]);
       themeObjects.push(ground[k]);
     }
+
+    World.jumpSigns(track, statics);
+    intersections = World.buildIntersections(track, statics);
+    intersections.forEach(function (i) { World.applyLightState(i); });
+    addStartLine(statics);
+    createRoadSigns(statics);
+    createJail(statics);
 
     if (scene.fog) {
       scene.fog.color.setHex(theme.fog);
@@ -247,6 +255,8 @@
       var p = pedestrians[i];
       scene.remove(p.mesh);
       disposeTree(p.mesh);
+      p.dist = track.length * i / pedestrians.length + Math.random() * 25;
+      p.off = World.sidewalkOffset(track) + (Math.random() - 0.5) * 2.2;
       p.mesh = World.buildPedestrian(World.theme.people);
       p.mesh.traverse(function (o) {
         if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
@@ -816,7 +826,9 @@
 
   /* ---------------- Знаки ограничения скорости и плакаты ---------------- */
 
-  function createRoadSigns() {
+  function createRoadSigns(host) {
+    host = host || scene;
+    signs = [];
     // знаки стоят между перекрёстками, за каждым — радар
     var spots = [
       { u: 0.10, limit: 80 }, { u: 0.34, limit: 60 },
@@ -836,7 +848,7 @@
       mesh.traverse(function (o) {
         if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
       });
-      scene.add(mesh);
+      host.add(mesh);
       signs.push({ mesh: mesh, dist: d, limit: spots[i].limit, flash: 0 });
     }
 
@@ -855,7 +867,7 @@
       bill.traverse(function (o) {
         if (o.isMesh) { o.castShadow = shadowsOn; o.userData.shadowCaster = true; }
       });
-      scene.add(bill);
+      host.add(bill);
     }
   }
 
@@ -1639,7 +1651,14 @@
   var JAIL_WALK = 34;            // дальше начинается барак — туда не зайти
   var JAIL_HALF = 20;            // половина двора вдоль трассы
 
-  function createJail() {
+  function createJail(host) {
+    host = host || scene;
+    if (jail) {                       // старый двор уезжает вместе с картой
+      scene.remove(jail.guard);
+      scene.remove(jail.key);
+      disposeTree(jail.guard);
+      disposeTree(jail.key);
+    }
     var mesh = World.buildJail();
     // двор ставим туда, где трасса идёт по ровному месту: тогда он не висит
     // над насыпью и пешеход ходит вровень с землёй
@@ -1654,7 +1673,7 @@
     mesh.traverse(function (o) {
       if (o.isMesh) { o.receiveShadow = true; }
     });
-    scene.add(mesh);
+    host.add(mesh);
 
     var guard = World.buildPedestrian('guard', 'man');
     guard.visible = false;
@@ -2090,7 +2109,8 @@
     }
   }
 
-  function addStartLine() {
+  function addStartLine(host) {
+    host = host || scene;
     var p = track.pointAt(0);
     var t = track.tangentAt(0);
     var g = new THREE.Group();
@@ -2137,7 +2157,7 @@
       banner.rotation.y = b === 0 ? Math.PI : 0;
       g.add(banner);
     }
-    scene.add(g);
+    host.add(g);
   }
 
   /* ---------------- Гонщики ---------------- */
@@ -2565,6 +2585,27 @@
         : (r.air > 0.15 ? 0.3 : 1) * (Math.abs(r.skid) > 0.4 ? 0.35 : 1) * (1 - wet * 0.25);
       r.lane -= r.steer * STEER_RATE * upgSteer(r) * dt * Math.min(1, r.speed / 9) * grip;
 
+      // Резкий поворот: если скорости больше, чем держит дорога,
+      // печку тащит наружу — на серпантине приходится тормозить.
+      var turn = track.turnAt(r.dist);
+      var hold = GRIP * upgSteer(r) * (1 - wet * 0.35) * (onEdge ? 0.72 : 1) *
+        (r.vehicle === 'stove' ? 1 : 1.15);
+      var need = r.speed * r.speed * Math.abs(turn);
+      if (!soaring && need > hold && r.speed > 6) {
+        var excess = Math.min(9, need - hold);
+        r.skid -= (turn > 0 ? 1 : -1) * excess * dt * 1.1;
+        r.slide = (r.slide || 0) + dt;
+        if (r.slide > 0.3) {
+          r.slide = 0;
+          var dc = camera.position.distanceTo(r.mesh.position);
+          sfx.screech(Math.max(0, 1 - dc / 90) * Math.min(1, excess / 4));
+          var sp = r.mesh.position.clone();
+          sp.y += 0.4;
+          smoke.emit(sp, new THREE.Vector3((Math.random() - 0.5) * 3, 0.8, (Math.random() - 0.5) * 3),
+            0.7, 0xbdbdbd);
+        }
+      }
+
       if (r.skid !== 0) {
         r.lane += r.skid * dt;
         r.skid -= r.skid * Math.min(1, dt * 1.6);
@@ -2711,6 +2752,18 @@
       var needG = (r.speed * r.speed) / (2 * BRAKE) + r.speed * r.ai.reaction + 4;
       var close = Math.abs(ob.obj.lane - r.lane) < 2.6;
       if (ob.gap < needG && close && r.speed > 3) return false;
+    }
+
+    // впереди крутой поворот: считаем безопасную скорость и сбрасываем заранее
+    var look = 14 + r.speed * (1.1 + r.ai.reaction);
+    var sharp = 0;
+    for (var la = 8; la <= look; la += 7) {
+      var tt = Math.abs(track.turnAt(r.dist + la));
+      if (tt > sharp) sharp = tt;
+    }
+    if (sharp > 0.0006) {
+      var safe = Math.sqrt(GRIP * r.ai.skill * (0.85 + difficulty.rules * 0.12) / sharp);
+      if (r.speed > safe) return false;
     }
 
     // радар впереди: осторожные сбрасывают заранее, лихачи проскакивают
@@ -3818,6 +3871,19 @@
     };
   };
 
+  /* Профиль трассы: где самые крутые повороты и какая там безопасная скорость. */
+  Game.corners = function () {
+    var out = [];
+    for (var d = 0; d < track.length; d += 10) {
+      var t = Math.abs(track.turnAt(d));
+      if (t > 0.008) {
+        out.push({ dist: Math.round(d), R: Math.round(1 / t),
+          safe: Math.round(Math.sqrt(GRIP / t) * 3.6) });
+      }
+    }
+    return out;
+  };
+
   Game.debug = function () {
     return {
       state: state,
@@ -3951,6 +4017,7 @@
     return Game.jailMe();
   };
   global.__probe = Game.probe;
+  global.__corners = Game.corners;
   global.__dbg = Game.debug;
   global.__renderInfo = Game.renderInfo;
   global.__ground = Game.groundUnder;

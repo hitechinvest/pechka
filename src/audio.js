@@ -692,6 +692,60 @@
   };
 
 
+  /* Визг покрышек в заносе: шум с резонансом и подвывающий тон. */
+  Sfx.prototype.screech = function (vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    var t = this.ctx.currentTime;
+    var src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    var bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(1500, t);
+    bp.frequency.linearRampToValueAtTime(2400, t + 0.25);
+    bp.Q.value = 9;
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.09 * vol, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    src.connect(bp).connect(g).connect(this.master);
+    src.start(t);
+    src.stop(t + 0.45);
+    var o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(320, t);
+    o.frequency.linearRampToValueAtTime(430, t + 0.3);
+    var og = this.ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.linearRampToValueAtTime(0.025 * vol, t + 0.06);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    o.connect(og).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.45);
+  };
+
+  /* Колокольчик альпийской коровы. */
+  Sfx.prototype.cowBell = function (vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    var t = this.ctx.currentTime;
+    var freqs = [740, 1090, 1630];
+    for (var i = 0; i < freqs.length; i++) {
+      var o = this.ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = freqs[i] * (0.99 + Math.random() * 0.02);
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.06 * vol / (i + 1), t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9 - i * 0.2);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 1);
+    }
+  };
+
+
   /* Шаги пешком: два глухих шлепка. */
   Sfx.prototype.footstep = function (vol) {
     this.init();
