@@ -1146,6 +1146,7 @@
             [0.70,'#d3e0e4'],[0.86,'#eaf0ef'],[1.00,'#f2f4f0']],
       haze: 'rgba(226,236,240,', clouds: 130, cloudAlpha: 0.28,
       fog: 0xd6e2e8, clear: 0x9cc2de, fogDensity: 0.0010,
+      radars: false,
       facades: ['chalet', 'chalet', 'white', 'brick'],
       facadeTints: [0xffffff, 0xf0e4cc, 0xe8e8e4, 0xd8c0a8],
       heights: [9, 13], capColor: 0x4a423a, roofs: 'gable',

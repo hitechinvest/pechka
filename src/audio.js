@@ -746,6 +746,29 @@
   };
 
 
+  /* Гиперразгон: турбинный вой с нарастающей высотой и порывом воздуха. */
+  Sfx.prototype.hyperWhine = function (vol) {
+    this.init();
+    if (!this.ctx || vol <= 0.02) return;
+    var t = this.ctx.currentTime;
+    for (var i = 0; i < 3; i++) {
+      var o = this.ctx.createOscillator();
+      o.type = i === 0 ? 'sawtooth' : 'triangle';
+      var base = 180 * (i + 1);
+      o.frequency.setValueAtTime(base, t);
+      o.frequency.exponentialRampToValueAtTime(base * 5.5, t + 1.1);
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.09 * vol / (i + 1), t + 0.08);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+      o.connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 1.35);
+    }
+    this.noise(1.2, 0.22 * vol, 3200);
+  };
+
+
   /* Шаги пешком: два глухих шлепка. */
   Sfx.prototype.footstep = function (vol) {
     this.init();

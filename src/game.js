@@ -19,6 +19,8 @@
   var HILL_PULL = 24;          // как сильно горка тянет назад (м/с^2 на единицу уклона)
   var DOWNHILL_CAP = 1.22;     // под горку можно перебрать сверх обычного максимума
   var SOAR_HEIGHT = 20;        // на какой высоте несут солнечные руки
+  var HYPER_SPEED = 83.3;      // 300 км/ч — только на альпийской трассе
+  var HYPER_ACCEL = 34;        // как быстро печка выходит на эти 300
   var GRIP = 8.6;              // сколько поперечного ускорения держит печка, м/с^2
   var GRAVITY = 12.5;          // сила тяжести: чуть меньше настоящей, чтобы прыжок читался
 
@@ -27,10 +29,10 @@
      положению, поэтому раскладка (русская или латиница) не важна.
      Цифра 1…7 — дублёр газа. */
   var HUMAN_KEYS = [
-    { short: '↑', label: '↑ · ← → · Z (турбо) · G (пешком)', throttle: ['ArrowUp', 'Space', 'Digit1'], left: ['ArrowLeft'], right: ['ArrowRight'], boost: ['KeyZ'], foot: ['KeyG'] },
+    { short: '↑', label: '↑ · ← → · Z (турбо) · F (300) · G (пешком)', throttle: ['ArrowUp', 'Space', 'Digit1'], left: ['ArrowLeft'], right: ['ArrowRight'], boost: ['KeyZ'], foot: ['KeyG'], hyper: ['KeyF'] },
     { short: 'W', label: 'W · Q E', throttle: ['KeyW', 'Digit2'], left: ['KeyQ'], right: ['KeyE'], boost: [] },
     { short: 'I', label: 'I · J L', throttle: ['KeyI', 'Digit3'], left: ['KeyJ'], right: ['KeyL'], boost: [] },
-    { short: 'T', label: 'T · F H', throttle: ['KeyT', 'Digit4'], left: ['KeyF'], right: ['KeyH'], boost: [] },
+    { short: 'T', label: 'T · R H', throttle: ['KeyT', 'Digit4'], left: ['KeyR'], right: ['KeyH'], boost: [] },
     { short: '8', label: 'Num 8 · 4 6', throttle: ['Numpad8', 'Digit5'], left: ['Numpad4'], right: ['Numpad6'], boost: [] },
     { short: 'N', label: 'N · B M', throttle: ['KeyN', 'Digit6'], left: ['KeyB'], right: ['KeyM'], boost: [] },
     { short: 'P', label: 'P · O [', throttle: ['KeyP', 'Digit7'], left: ['KeyO'], right: ['BracketLeft'], boost: [] }
@@ -96,6 +98,7 @@
   var touchThrottle = {};
   var touchSteer = {};
   var touchBoost = {};
+  var touchHyper = {};
   var state = 'menu';          // menu | countdown | race | over
   var countdown = 0;
   var totalLaps = 2;
@@ -834,6 +837,8 @@
   function createRoadSigns(host) {
     host = host || scene;
     signs = [];
+    // на альпийском перевале ограничений нет — там и без радаров страшно
+    if (World.theme.radars === false) return;
     // знаки стоят между перекрёстками, за каждым — радар
     var spots = [
       { u: 0.10, limit: 80 }, { u: 0.34, limit: 60 },
@@ -2212,6 +2217,7 @@
         air: 0,            // насколько печка сейчас оторвалась от дороги
         onFoot: false,     // хозяин слез с печки и гуляет
         foot: null,
+        hyper: false,      // держит F: альпийские 300 км/ч
         bumperUsed: false, // чугунный бампер уже спас один раз
         vehicle: 'stove',  // на чём едет: печка, машина или полицейская
         car: null,
@@ -2543,6 +2549,16 @@
       var wasBoosting = r.boosting;
       if (r.wings) wantBoost = false;          // с крыльями Z — это «вверх», а не турбо
       r.boosting = wantBoost && r.throttle && r.steam > (r.boosting ? 0.5 : STEAM_MIN);
+      // Альпийский гиперразгон: клавиша F разгоняет до 300 км/ч.
+      // Работает только в Швейцарии, только у живого игрока и только на колёсах.
+      var wasHyper = r.hyper;
+      r.hyper = hyperAllowed(r) &&
+        (pressed(r.keys.hyper) || !!touchHyper[r.id]);
+      if (r.hyper && !wasHyper) {
+        sfx.hyperWhine(1);
+        music.duck(0.8);
+        flash(r.name + ': 300 КМ/Ч! ⚡', '#7fd4ff');
+      }
       if (r.boosting) {
         r.steam = Math.max(0, r.steam - STEAM_DRAIN / upgSteam(r) * dt);
         if (!wasBoosting) {
@@ -2574,6 +2590,12 @@
         if (r.speed < maxV) r.speed = Math.min(maxV, r.speed + accel * dt);
       } else {
         r.speed = Math.max(0, r.speed - BRAKE * upgBrake(r) * dt);
+      }
+      // гиперразгон перебивает любой потолок: держишь F — печка идёт к 300
+      if (r.hyper) {
+        maxV = Math.max(maxV, HYPER_SPEED);
+        cap = Math.max(cap, HYPER_SPEED);
+        r.speed = Math.min(HYPER_SPEED, r.speed + HYPER_ACCEL * dt);
       }
 
       if (soaring) {
@@ -2938,13 +2960,13 @@
 
     // на скорости шире угол и небольшая тряска — печка всё-таки не гоночный болид
     if (cameraMode !== 2) {
-      var v = r.speed / MAX_SPEED;
-      var fov = 62 + v * 8;
+      var v = Math.min(2.2, r.speed / MAX_SPEED);
+      var fov = 62 + v * 11;
       if (Math.abs(camera.fov - fov) > 0.1) {
         camera.fov = fov;
         camera.updateProjectionMatrix();
       }
-      var shake = v * v * 0.16;
+      var shake = Math.min(0.4, v * v * 0.16);
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake;
     }
@@ -3032,6 +3054,12 @@
     ui.granny.style.opacity = granny ? '1' : '0';
     if (granny) ui.grannyDist.textContent = Math.round(granny.gap) + ' м';
 
+    // гиперразгон важнее любых других табличек
+    if (f.hyper) {
+      ui.soar.style.opacity = '1';
+      ui.soar.textContent = '⚡ 300 КМ/Ч · ' + Math.round(f.speed * 3.6);
+    }
+
     // крутой спуск впереди: предупреждаем и показываем уклон
     var slopeNow = track.slopeAt(f.dist);
     var slopeSoon = track.slopeAt(f.dist + 40);
@@ -3046,8 +3074,8 @@
     }
 
     // полёт на солнечных руках
-    ui.soar.style.opacity = f.soarY > 1 ? '1' : '0';
-    if (f.soarY > 1) {
+    if (!f.hyper) ui.soar.style.opacity = f.soarY > 1 ? '1' : '0';
+    if (f.soarY > 1 && !f.hyper) {
       ui.soar.textContent = f.wings && f.soarLeft <= 0
         ? ('🪶 КРЫЛЬЯ · ' + Math.round(f.soarY) + ' м · Z — выше')
         : ('☀️ ПОЛЁТ · ' + Math.ceil(f.soarLeft) + ' с · ' + Math.round(f.soarY) + ' м');
@@ -3081,6 +3109,7 @@
       var el = ui.pedals[h];
       el.classList.toggle('on', !!pr.throttle && !pr.dq && !pr.finished);
       el.classList.toggle('boost', !!pr.boosting);
+      el.classList.toggle('hyper', !!pr.hyper);
       el.classList.toggle('out', pr.dq);
       var bar = el.querySelector('.steam i');
       if (bar) bar.style.width = Math.round(pr.steam) + '%';
@@ -3135,6 +3164,12 @@
     if (ui.walletMenu) ui.walletMenu.textContent = shop.coins;
     ui.resultBody.innerHTML = html;
     ui.results.classList.add('show');
+  }
+
+  /* Гиперразгон разрешён только в Швейцарии и только живому игроку на печке. */
+  function hyperAllowed(r) {
+    return !!(r.isHuman && r.keys && r.keys.hyper && r.keys.hyper.length &&
+      mapId === 'swiss' && !r.onFoot && r.jail <= 0 && !r.dq && !r.finished);
   }
 
   /* ---------------- Крылья: печка летает (админ) ---------------- */
@@ -3413,7 +3448,7 @@
   /* ---------------- Ввод ---------------- */
 
   function bindInput() {
-    var swallow = /^(Space|Arrow|Digit|Numpad|Bracket|Comma|Key[ZSKGMPONBTIWQEFHLJ])/;
+    var swallow = /^(Space|Arrow|Digit|Numpad|Bracket|Comma|Key[ZSKGMPONBTIWQEFHLJR])/;
     global.addEventListener('keydown', function (e) {
       keys[e.code] = true;
       if (swallow.test(e.code)) e.preventDefault();
@@ -3471,6 +3506,8 @@
       el.style.borderColor = color;
       var turbo = (i === 0)
         ? '<button class="pbtn turbo" data-act="boost">ТУРБО Z</button><div class="steam"><i></i></div>' +
+          (mapId === 'swiss'
+            ? '<button class="pbtn hyper" data-act="hyper">300 F</button>' : '') +
           '<button class="pbtn walk" data-act="foot">ПЕШКОМ G</button>'
         : '';
       el.innerHTML =
@@ -3495,6 +3532,7 @@
           ev.preventDefault();
           if (act === 'gas') touchThrottle[idx] = true;
           else if (act === 'boost') touchBoost[idx] = true;
+          else if (act === 'hyper') touchHyper[idx] = true;
           else if (act === 'foot') { if (racers[idx]) toggleFoot(racers[idx]); }
           else touchSteer[idx] = act === 'left' ? -1 : 1;
           node.classList.add('held');
@@ -3505,6 +3543,7 @@
           if (ev) ev.preventDefault();
           if (act === 'gas') touchThrottle[idx] = false;
           else if (act === 'boost') touchBoost[idx] = false;
+          else if (act === 'hyper') touchHyper[idx] = false;
           else if (act === 'foot') { /* нажатие уже отработало */ }
           else if (touchSteer[idx] === (act === 'left' ? -1 : 1)) touchSteer[idx] = 0;
           node.classList.remove('held');
@@ -3533,6 +3572,7 @@
     touchThrottle = {};
     touchSteer = {};
     touchBoost = {};
+    touchHyper = {};
     keys = {};
     elapsed = 0;
     overTimer = 0;
@@ -3977,7 +4017,7 @@
           reason: r.dqReason || null, rider: r.rider,
           jail: +r.jail.toFixed(1), jailReason: r.jailReason || null, skid: +r.skid.toFixed(2),
           soar: +(r.soarY || 0).toFixed(1), soarLeft: +(r.soarLeft || 0).toFixed(1),
-          onFoot: !!r.onFoot, vehicle: r.vehicle, wings: !!r.wings,
+          onFoot: !!r.onFoot, vehicle: r.vehicle, wings: !!r.wings, hyper: !!r.hyper,
           foot: r.foot && r.onFoot ? { dist: Math.round(r.foot.dist), lane: +r.foot.lane.toFixed(1),
             stun: +r.foot.stun.toFixed(1) } : null,
           throttle: r.throttle,
